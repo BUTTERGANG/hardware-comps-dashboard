@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>{% block title %}Hardware Comps Dashboard{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/base.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a href="/" class="brand">HW Comps</a>
+      <nav class="table-switcher" id="tableSwitcher">
+        {% for key, label in tables %}
+        <a href="#" data-table="{{ key }}" class="switcher-btn {% if key == active_table %}active{% endif %}">{{ label }}</a>
+        {% endfor %}
+      </nav>
+      <div class="topbar-meta">
+        <span class="token-hint">API token required</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="container main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="/static/js/dashboard.js" defer></script>
+</body>
+</html>

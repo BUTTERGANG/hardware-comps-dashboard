@@ -1,0 +1,36 @@
+# ────────────────────────────────────────────────────────────
+# Hardware Comps Dashboard — Replit config
+# FastAPI + static HTML. Port from $PORT.
+# ────────────────────────────────────────────────────────────
+
+[run]
+args = ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "$PORT"]
+
+[env]
+# Neon DBs (one project, multiple databases)
+# APP_NEON_URL is the project base URL; individual DBs are
+# {APP_NEON_URL}/<dbname>  (Neon allows this for same-project DBs)
+APP_NEON_URL = "postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech"
+# Alternatively per-DB URLs:
+# INVENTORY_DB_URL, COMPS_CACHE_DB_URL, MEMORY_MARKET_DB_URL
+
+# eBay (embedded client, not proxy)
+EBAY_CLIENT_ID = ""
+EBAY_CLIENT_SECRET = ""
+
+# Auth for API routes (Bearer tokens)
+HCD_API_TOKENS = ""
+
+# Site URL for production links
+SITE_URL = ""
+
+[deployment]
+build = ["uv", "sync", "--frozen"]
+run = ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "$PORT"]
+
+[git]
+ignore = [
+    ".venv/", "__pycache__/", "*.pyc", ".local/",
+    "data/", "*.db", ".env", "node_modules/",
+    "*.sqlite", "*.sqlite-wal", "*.sqlite-shm",
+]

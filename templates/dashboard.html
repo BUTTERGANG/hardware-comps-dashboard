@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+
+{% block title %}Hardware Comps Dashboard — {{ active_table|replace("_", " ")|title }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Hardware Comps Dashboard</h1>
+  <p class="subtitle">eBay comps + per-item price trends across your resale inventory.</p>
+  <div class="header-actions">
+    <button class="btn btn-primary" id="addItemBtn">+ Add Item</button>
+    <button class="btn" id="refreshCompsBtn">Refresh Comps (selected)</button>
+    <button class="btn" id="batchCompsBtn">Run Batch Comps</button>
+  </div>
+</div>
+
+<div class="stats-row" id="statsRow">
+  <div class="stat-card">
+    <div class="stat-label">Items Tracked</div>
+    <div class="stat-value" id="statTotal">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Last Comp Avg (sold)</div>
+    <div class="stat-value" id="statSoldAvg">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Last Comp Avg (active)</div>
+    <div class="stat-value" id="statActiveAvg">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Est. Total Portfolio Value</div>
+    <div class="stat-value" id="statPortfolio">—</div>
+  </div>
+</div>
+
+<div class="toolbar">
+  <input type="search" id="itemSearch" placeholder="Filter by name, model, serial…" class="input" />
+  <select id="conditionFilter" class="input">
+    <option value="">All conditions</option>
+    <option value="like_new">Like New</option>
+    <option value="good">Good</option>
+    <option value="fair">Fair</option>
+    <option value="poor">Poor</option>
+  </select>
+  <button class="btn" id="clearFiltersBtn">Clear filters</button>
+</div>
+
+<div class="table-wrap">
+  <table class="data-table" id="inventoryTable">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Type</th>
+        <th>Make / Model</th>
+        <th>Condition</th>
+        <th>Buy Cost</th>
+        <th>Sold Comp</th>
+        <th>Active Comp</th>
+        <th>Trend</th>
+        <th>Last Looked</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="inventoryBody">
+      <tr><td colspan="10" class="empty-row">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="pager" id="pager">
+  <button class="btn" id="prevPageBtn">← Prev</button>
+  <span class="pager-info" id="pagerInfo">Page 1</span>
+  <button class="btn" id="nextPageBtn">Next →</button>
+</div>
+
+<!-- Add / edit item modal -->
+<div class="modal-overlay" id="itemModal" hidden>
+  <div class="modal">
+    <h2 id="modalTitle">Add Item</h2>
+    <form id="itemForm" class="modal-form" autocomplete="off">
+      <input type="hidden" name="id" id="itemId" />
+
+      <label class="field">
+        <span>Table Type</span>
+        <select name="table_type" id="itemTableType" class="input" required>
+          <option value="personal_assets">Personal Assets</option>
+          <option value="goodwill_flips">Goodwill Flips</option>
+          <option value="liquidation_pallets">Liquidation Pallets</option>
+          <option value="ram_ssd_stockpile">RAM/SSD Stockpile</option>
+          <option value="device_farm">Device Farm</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>Name</span>
+        <input type="text" name="name" id="itemName" class="input" placeholder="e.g. Dell P2419H 24-inch monitor" required />
+      </label>
+
+      <div class="field-row">
+        <label class="field">
+          <span>Make</span>
+          <input type="text" name="make" id="itemMake" class="input" placeholder="Dell" />
+        </label>
+        <label class="field">
+          <span>Model</span>
+          <input type="text" name="model" id="itemModel" class="input" placeholder="P2419H" />
+        </label>
+      </div>
+
+      <div class="field-row">
+        <label class="field">
+          <span>Category</span>
+          <input type="text" name="category" id="itemCategory" class="input" placeholder="Monitor" />
+        </label>
+        <label class="field">
+          <span>Condition</span>
+          <select name="condition" id="itemCondition" class="input">
+            <option value="">—</option>
+            <option value="like_new">Like New</option>
+            <option value="good">Good</option>
+            <option value="fair">Fair</option>
+            <option value="poor">Poor</option>
+          </select>
+        </label>
+      </div>
+
+      <label class="field">
+        <span>Serial Number</span>
+        <input type="text" name="serial_number" id="itemSerial" class="input" />
+      </label>
+
+      <div class="field-row">
+        <label class="field">
+          <span>Buy Cost ($)</span>
+          <input type="number" step="0.01" name="acquisition_cost_cents" id="itemBuyCost" class="input" placeholder="0.00" />
+        </label>
+        <label class="field">
+          <span>Buy Source</span>
+          <input type="text" name="buy_source" id="itemBuySource" class="input" placeholder="Goodwill, estate sale…" />
+        </label>
+      </div>
+
+      <label class="field">
+        <span>eBay Search Query</span>
+        <input type="text" name="search_query" id="itemSearchQuery" class="input" placeholder="Dell P2419H 24 inch monitor" />
+      </label>
+
+      <label class="field">
+        <span>Notes</span>
+        <textarea name="notes" id="itemNotes" class="input" rows="2"></textarea>
+      </label>
+
+      <div class="modal-actions">
+        <button type="button" class="btn" id="modalCancelBtn">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save Item</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Comp lookup modal -->
+<div class="modal-overlay" id="compModal" hidden>
+  <div class="modal">
+    <h2>Run eBay Comps</h2>
+    <p class="subtitle" style="margin-bottom:1rem">Queries eBay active + sold listings for the selected item. Results write to price history.</p>
+    <form id="compForm" class="modal-form">
+      <input type="hidden" name="item_id" id="compItemId" />
+      <label class="field">
+        <span>eBay Query Override (optional)</span>
+        <input type="text" name="query" id="compQuery" class="input" placeholder="Leave blank to use item's search_query" />
+      </label>
+      <label class="field">
+        <span>Limit</span>
+        <input type="number" name="limit" id="compLimit" class="input" value="50" min="1" max="200" />
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="compCancelBtn">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="compRunBtn">Run Comps</button>
+      </div>
+    </form>
+    <div id="compResult" class="comp-result" hidden>
+      <h3>Comp Results</h3>
+      <div class="comp-summary" id="compSummary"></div>
+      <div class="comp-items" id="compItems"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Batch comps modal -->
+<div class="modal-overlay" id="batchModal" hidden>
+  <div class="modal">
+    <h2>Batch Comps</h2>
+    <p class="subtitle" style="margin-bottom:1rem">Run eBay comps for selected items. Requires each item to have a search_query.</p>
+    <div class="batch-info" id="batchInfo">
+      Select items in the table (checkbox column) and click "Run Batch Comps".
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="batchCancelBtn">Cancel</button>
+      <button type="submit" class="btn btn-primary" id="batchRunBtn">Run Batch</button>
+    </div>
+  </div>
+</div>
+
+<!-- Memory market sidebar panel (RAM/SSD tab only) -->
+<div class="memory-sidebar" id="memorySidebar" hidden>
+  <div class="sidebar-section">
+    <h3>DDR Generation Spot Prices</h3>
+    <div class="memory-gen-cards" id="memoryGenCards"></div>
+  </div>
+  <div class="sidebar-section">
+    <h3>Supply-Side Events</h3>
+    <div class="memory-events" id="memoryEvents"></div>
+  </div>
+  <div class="sidebar-section">
+    <p class="sidebar-note">
+      Leading-indicator model: DDR3 → DDR4 → DDR5 price cascade.
+      Watch DDR5 secondary-market supply to time DDR4 exits.
+    </p>
+  </div>
+</div>
+{% endblock %}
