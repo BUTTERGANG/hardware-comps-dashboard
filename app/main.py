@@ -5,8 +5,7 @@ One dashboard, multiple inventory tables (personal_assets, goodwill_flips,
 liquidation_pallets, ram_ssd_stockpile, device_farm). eBay comps engine,
 per-item price history, RAM/SSD stockpile tracking.
 
-Neon: one project, three databases (hcd_inventory, hcd_comps_cache,
-hcd_memory_market). Local SQLite cache for eBay comps (data/).
+Neon: single database (DATABASE_URL). Local SQLite cache for eBay comps (data/).
 """
 
 import asyncio
@@ -47,23 +46,12 @@ DATA_DIR.mkdir(exist_ok=True)
 PORT = int(os.environ.get("PORT", "5000"))
 SITE_URL = os.environ.get("SITE_URL", "")
 
-# Neon: one project, three databases
+# Neon: single DB (DATABASE_URL or APP_NEON_URL for compat)
 APP_NEON_URL = os.environ.get("APP_NEON_URL", "")
-INVENTORY_DB_URL = os.environ.get("INVENTORY_DB_URL") or f"{APP_NEON_URL}/hcd_inventory" if APP_NEON_URL else ""
-COMPS_CACHE_DB_URL = os.environ.get("COMPS_CACHE_DB_URL") or f"{APP_NEON_URL}/hcd_comps_cache" if APP_NEON_URL else ""
-MEMORY_MARKET_DB_URL = os.environ.get("MEMORY_MARKET_DB_URL") or f"{APP_NEON_URL}/hcd_memory_market" if APP_NEON_URL else ""
+DATABASE_URL = os.environ.get("DATABASE_URL") or APP_NEON_URL
 
-# Per-DB fallback env (set explicitly if Neon DB-per-URL not usable)
-INVENTORY_DB_URL = os.environ.get("INVENTORY_DB_URL", INVENTORY_DB_URL)
-COMPS_CACHE_DB_URL = os.environ.get("COMPS_CACHE_DB_URL", COMPS_CACHE_DB_URL)
-MEMORY_MARKET_DB_URL = os.environ.get("MEMORY_MARKET_DB_URL", MEMORY_MARKET_DB_URL)
-
-# Local SQLite cache (eBay comps + price history snapshot on the cheap)
+# Local SQLite cache (eBay comps — hot path, resilience when Neon is down)
 COMPS_CACHE_DB = str(DATA_DIR / "comps_cache.db")
-PRICE_HISTORY_DB = str(DATA_DIR / "price_history.db")
-
-if not APP_NEON_URL:
-    logger.warning("APP_NEON_URL unset — Neon-backed routes will 503 until set")
 
 # eBay (embedded client)
 EBAY_CLIENT_ID = os.environ.get("EBAY_CLIENT_ID", "")
@@ -77,14 +65,7 @@ if not HCD_API_TOKENS:
 
 # ── Imports (local modules, lazy so startup fails loud on missing deps) ─────
 
-from app.db_neon import (
-    get_inventory_conn,
-    get_comps_conn,
-    get_memory_conn,
-    init_inventory_db,
-    init_comps_db,
-    init_memory_db,
-)
+from app.db_neon import get_conn, init_db
 from app.models import (
     InventoryItem,
     InventoryCreate,
@@ -92,20 +73,22 @@ from app.models import (
     CompsLookupRequest,
     MemoryPrice,
     MemoryEvent,
+    SearchResult,
+    IdentificationResult,
 )
 from app.ebay_client import eBayClient
+from app.claude_client import ClaudeClient, identify_from_image, analyze_item, identify_and_comps
 
 ebay = eBayClient()
+claude = ClaudeClient()
 
 # ── Lifespan ────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Hardware Comps Dashboard starting")
-    init_inventory_db()
-    init_comps_db()
-    init_memory_db()
-    logger.info("DBs initialized")
+    init_db()
+    logger.info("DB initialized")
     yield
     logger.info("Shutting down")
 
@@ -162,10 +145,8 @@ def check_token(request: Request) -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Hardware Comps Dashboard starting")
-    init_inventory_db()
-    init_comps_db()
-    init_memory_db()
-    logger.info("DBs initialized")
+    init_db()
+    logger.info("DB initialized")
     yield
     logger.info("Shutting down")
 
@@ -232,6 +213,121 @@ async def get_inventory_item(request: Request, item_id: int):
     return {"item": item, "price_history": history}
 
 
+# ── Search API (text + photo) ────────────────────────────────────────────────
+
+@app.get("/api/search")
+async def search_comps(request: Request, q: str = "", limit: int = 20):
+    """Text search → eBay comps. No item needed; returns comps + averages.
+
+    Query param `q` is the eBay search query (e.g. "Samsung 8GB DDR4 SODIMM").
+    Returns active + sold listings, averages, and a suggested search_query.
+    """
+    check_token(request)
+    if not q or not q.strip():
+        raise HTTPException(400, "query parameter 'q' is required")
+    if not EBAY_CLIENT_ID or not EBAY_CLIENT_SECRET:
+        raise HTTPException(503, "eBay keys not configured")
+    query = q.strip()
+    result = await ebay.lookup_comps(query, limit)
+    # Normalize result to the SearchResult shape
+    return {
+        "query": query,
+        "active_items": result.get("active_items", []),
+        "sold_items": result.get("sold_items", []),
+        "active_avg": result.get("active_avg", 0),
+        "sold_avg": result.get("sold_avg", 0),
+        "active_count": result.get("active_count", 0),
+        "sold_count": result.get("sold_count", 0),
+        "suggested_query": result.get("query", query),
+    }
+
+
+@app.post("/api/search/photo")
+async def search_by_photo(request: Request, body: dict):
+    """Photo → identify → eBay comps → pricing analysis.
+
+    Expects body: {"image_b64": "<base64>", "image_mime": "image/jpeg", "limit": 50}
+    Returns: {identification, comps, analysis}
+    """
+    check_token(request)
+    if not EBAY_CLIENT_ID or not EBAY_CLIENT_SECRET:
+        raise HTTPException(503, "eBay keys not configured")
+    if not CLAUDE_API_KEY:
+        raise HTTPException(503, "Claude API key not configured")
+    image_b64 = body.get("image_b64", "")
+    image_mime = body.get("image_mime", "image/jpeg")
+    limit = body.get("limit", 50)
+    if not image_b64:
+        raise HTTPException(400, "image_b64 is required")
+    import base64
+    try:
+        image_bytes = base64.b64decode(image_b64)
+    except Exception as e:
+        raise HTTPException(400, f"invalid base64 image: {e}")
+    if len(image_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(400, "image too large (max 10MB)")
+    try:
+        result = await identify_and_comps(image_bytes, image_mime, ebay_client=ebay, comps_limit=limit, do_refinement=True)
+        return result
+    except RuntimeError as e:
+        if "CLAUDE_API_KEY" in str(e):
+            raise HTTPException(503, "Claude API key not configured")
+        raise HTTPException(502, str(e))
+    except Exception as e:
+        logger.error(f"Photo search error: {e}")
+        raise HTTPException(502, str(e))
+
+
+@app.post("/api/search/save-identification")
+async def save_identification(request: Request, body: dict):
+    """Save a photo-identification result as an inventory item.
+
+    Expects body: {"identification": {...}, "comps": {...}, "analysis": {...},
+                   "table_type": "goodwill_flips", "acquisition_cost_cents": 500, ...}
+    Creates an inventory item from the identification, writes a price snapshot,
+    and returns the item ID.
+    """
+    check_token(request)
+    identification = body.get("identification", {})
+    comps = body.get("comps", {})
+    table_type = body.get("table_type", "goodwill_flips")
+    name = identification.get("item_name") or "Unknown item"
+    make = identification.get("brand")
+    model = identification.get("model")
+    category = identification.get("category")
+    condition = identification.get("condition", "unknown")
+    search_query = identification.get("ebay_search_query") or name
+    acq_cost = body.get("acquisition_cost_cents")
+    buy_source = body.get("buy_source", "Photo scan")
+    notes = body.get("notes", "")
+
+    item = InventoryCreate(
+        id=None,
+        table_type=table_type,
+        name=name,
+        make=make,
+        model=model,
+        category=category,
+        condition=condition,
+        notes=notes,
+        acquisition_cost_cents=acq_cost,
+        buy_source=buy_source,
+        search_query=search_query,
+        ebay_active_avg_cents=int(comps.get("active_avg", 0) * 100) if comps.get("active_avg") else None,
+        ebay_sold_avg_cents=int(comps.get("sold_avg", 0) * 100) if comps.get("sold_avg") else None,
+        ebay_last_looked_at=datetime.now(timezone.utc).isoformat(),
+        metadata_json={
+            "identification": identification,
+            "comps": comps,
+            "analysis": body.get("analysis", {}),
+        },
+    )
+    item_id = upsert_inventory_db(item)
+    # Write price snapshot
+    write_price_snapshot(item_id, comps)
+    return {"ok": True, "id": item_id, "item": get_inventory_db(item_id)}
+
+
 # ── Comps API ───────────────────────────────────────────────────────────────
 
 @app.post("/api/comps/lookup")
@@ -286,6 +382,21 @@ async def memory_market(request: Request):
     return {"prices": prices, "events": events, "generated_at": datetime.now(timezone.utc).isoformat()}
 
 
+@app.post("/api/memory-market")
+async def log_memory_event(request: Request, body: dict):
+    """Log a supply-side / price event for the memory market."""
+    check_token(request)
+    event_type = body.get("event_type", "price_spike")
+    generation = body.get("generation") or None
+    headline = body.get("headline", "")
+    body_text = body.get("body") or None
+    source_url = body.get("source_url") or None
+    if not headline:
+        raise HTTPException(400, "headline is required")
+    write_memory_event(event_type, generation, headline, body_text, source_url)
+    return {"ok": True, "event_type": event_type, "headline": headline}
+
+
 # ── Static dashboard JS data endpoint (lightweight, no auth for page render) ─
 
 @app.get("/api/dashboard-data")
@@ -311,10 +422,10 @@ VALID_TABLE_TYPES = {
 
 def list_inventory_db(table_type: str, limit: int, offset: int):
     """Neon-backed: list inventory items, optionally filtered by table_type."""
-    if not INVENTORY_DB_URL:
+    if not DATABASE_URL:
         return []
     try:
-        conn = get_inventory_conn()
+        conn = get_conn()
         if table_type:
             rows = conn.execute(
                 """SELECT * FROM inventory_items
@@ -337,10 +448,10 @@ def list_inventory_db(table_type: str, limit: int, offset: int):
 
 
 def count_inventory_db(table_type: str):
-    if not INVENTORY_DB_URL:
+    if not DATABASE_URL:
         return 0
     try:
-        conn = get_inventory_conn()
+        conn = get_conn()
         if table_type:
             n = conn.execute(
                 "SELECT COUNT(*) FROM inventory_items WHERE table_type = ? AND deleted_at IS NULL",
@@ -358,10 +469,10 @@ def count_inventory_db(table_type: str):
 
 
 def get_inventory_db(item_id: int):
-    if not INVENTORY_DB_URL:
+    if not DATABASE_URL:
         return None
     try:
-        conn = get_inventory_conn()
+        conn = get_conn()
         row = conn.execute(
             "SELECT * FROM inventory_items WHERE id = ?", (item_id,)
         ).fetchone()
@@ -373,10 +484,10 @@ def get_inventory_db(item_id: int):
 
 
 def upsert_inventory_db(item: InventoryCreate):
-    if not INVENTORY_DB_URL:
-        raise RuntimeError("Neon inventory DB not configured")
+    if not DATABASE_URL:
+        raise RuntimeError("Neon DB not configured (DATABASE_URL)")
     try:
-        conn = get_inventory_conn()
+        conn = get_conn()
         now = datetime.now(timezone.utc)
         if item.id:
             conn.execute(
@@ -429,12 +540,12 @@ def upsert_inventory_db(item: InventoryCreate):
 
 def write_price_snapshot(item_id: int, result: dict):
     """Write an eBay comp result as a price_history row (Neon)."""
-    if not INVENTORY_DB_URL:
+    if not DATABASE_URL:
         return
     try:
-        conn = get_inventory_conn()
+        conn = get_conn()
         now = datetime.now(timezone.utc)
-        sold_prices = [i["price"] for i in result.get("items", []) if i.get("price")]
+        sold_prices = [i["price"] for i in result.get("sold_items", []) if i.get("price")]
         active_prices = [i["price"] for i in result.get("active_items", []) if i.get("price")]
         sold_avg = round(sum(sold_prices) / len(sold_prices), 2) if sold_prices else 0
         active_avg = round(sum(active_prices) / len(active_prices), 2) if active_prices else 0
@@ -442,7 +553,8 @@ def write_price_snapshot(item_id: int, result: dict):
             """INSERT INTO price_history
                (item_id, snapshot_at, sold_avg_cents, active_avg_cents,
                 sold_count, active_count, comps_query, comps_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (item_id, snapshot_at) DO NOTHING""",
             (
                 item_id, now,
                 int(sold_avg * 100), int(active_avg * 100),
@@ -451,7 +563,6 @@ def write_price_snapshot(item_id: int, result: dict):
                 json.dumps(result),
             ),
         )
-        # Update item's latest comp averages
         conn.execute(
             """UPDATE inventory_items SET
                ebay_sold_avg_cents=?, ebay_active_avg_cents=?,
@@ -465,10 +576,10 @@ def write_price_snapshot(item_id: int, result: dict):
 
 
 def list_price_history_db(item_id: int, limit: int):
-    if not INVENTORY_DB_URL:
+    if not DATABASE_URL:
         return []
     try:
-        conn = get_inventory_conn()
+        conn = get_conn()
         rows = conn.execute(
             """SELECT * FROM price_history
                WHERE item_id = ? ORDER BY snapshot_at DESC LIMIT ?""",
@@ -481,11 +592,67 @@ def list_price_history_db(item_id: int, limit: int):
         return []
 
 
-# ── Memory market feed (for metals dashboard) ──────────────────────────────
+def list_memory_prices_db(limit: int):
+    if not DATABASE_URL:
+        return []
+    try:
+        conn = get_conn()
+        rows = conn.execute(
+            """SELECT generation, form_factor, capacity_gb, speed_mhz,
+                    spot_avg_cents, source_query, observed_at
+               FROM memory_prices
+               ORDER BY observed_at DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"Memory prices DB error: {e}")
+        return []
+
+
+def list_memory_events_db(limit: int):
+    if not DATABASE_URL:
+        return []
+    try:
+        conn = get_conn()
+        rows = conn.execute(
+            """SELECT event_type, generation, headline, body, source_url, observed_at
+               FROM memory_events
+               ORDER BY observed_at DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"Memory events DB error: {e}")
+        return []
+
+
+def write_memory_event(event_type: str, generation: str | None, headline: str, body: str | None, source_url: str | None):
+    if not DATABASE_URL:
+        return
+    try:
+        conn = get_conn()
+        now = datetime.now(timezone.utc)
+        conn.execute(
+            """INSERT INTO memory_events
+               (event_type, generation, headline, body, source_url, observed_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (event_type, generation, headline, body, source_url, now),
+        )
+        conn.commit()
+        conn.close()
+        logger.info(f"Memory event logged: {event_type} — {headline}")
+    except Exception as e:
+        logger.error(f"Memory event write error: {e}")
+
 
 def write_memory_market_feed():
     """Write a lightweight JSON snapshot of current memory prices for the
     infra-metals-dashboard cron to pick up as a demand-side signal."""
+    if not DATABASE_URL:
+        return
     prices = list_memory_prices_db(limit=90)
     snapshot_path = DATA_DIR / "memory_market_feed.json"
     try:

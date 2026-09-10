@@ -29,15 +29,16 @@ data/            — .gitignore'd; local SQLite cache + memory_market_feed.json
 
 ## Neon topology
 
-One Neon project, three databases, connected via `db_neon.py`. Env vars:
+One Neon project, single database, connected via `db_neon.py`. Env vars:
 
-- `APP_NEON_URL` — project base URL; individual DB URLs are derived as
+- `APP_NEON_URL` — Neon project base URL; individual DB URLs derived as
   `{APP_NEON_URL}/<dbname>` when possible, else set explicitly.
 
 Databases:
-- `hcd_inventory` — inventory + price_history
-- `hcd_comps_cache` — eBay comps cache
-- `hcd_memory_market` — DDR reference prices + supply-side events
+- Everything in one DB via `DATABASE_URL`:
+  - inventory + price_history
+  - eBay comps cache (query-keyed, TTL)
+  - DDR3/4/5 reference prices + supply-side events
 
 ## eBay
 

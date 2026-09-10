@@ -22,12 +22,15 @@
     wireSearchFilter();
     wirePager();
     wireTableRowClicks();
+    wireSearchPanel();
     // Initial load of the active table
     loadTable(currentTable, 0);
     // If RAM/SSD tab, load memory market sidebar
     if (currentTable === "ram_ssd_stockpile") {
       loadMemoryMarket();
     }
+    // Wire search panel after DOM ready
+    wireSearchPanel();
   });
 
   /* ── Auth: read token from a global injected by server, or prompt once ── */
@@ -816,6 +819,563 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
+  }
+
+  /* ── Search panel (text + photo) ── */
+  function wireSearchPanel() {
+    var tabs = document.querySelectorAll("#searchTabs .search-tab");
+    var textPanel = document.getElementById("textSearchPanel");
+    var photoPanel = document.getElementById("photoSearchPanel");
+    var textForm = document.getElementById("textSearchForm");
+    var photoForm = document.getElementById("photoSearchForm");
+    var photoInput = document.getElementById("photoInput");
+    var photoPreview = document.getElementById("photoPreview");
+    var photoPlaceholder = document.getElementById("photoPlaceholder");
+    var photoDropZone = document.getElementById("photoDropZone");
+    var photoBtn = document.getElementById("photoSearchBtn");
+    var photoClearBtn = document.getElementById("photoClearBtn");
+    var photoStatus = document.getElementById("photoStatus");
+    var textResult = document.getElementById("textSearchResult");
+    var photoResult = document.getElementById("photoSearchResult");
+
+    // Tab switching
+    tabs.forEach(function (tab) {
+      tab.addEventListener("click", function () {
+        tabs.forEach(function (t) { t.classList.remove("active"); });
+        tab.classList.add("active");
+        var target = tab.getAttribute("data-tab");
+        textPanel.classList.toggle("active", target === "text");
+        photoPanel.classList.toggle("active", target === "photo");
+      });
+    });
+
+    // ── Text search ──
+    textForm.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var input = document.getElementById("textSearchInput");
+      var limitInput = document.getElementById("textSearchLimit");
+      var q = (input.value || "").trim();
+      if (!q) {
+        toast("Enter a search query first", "error");
+        return;
+      }
+      var limit = parseInt(limitInput.value, 10) || 20;
+      if (limit < 1 || limit > 200) limit = 20;
+
+      var btn = document.getElementById("textSearchBtn");
+      var saveBtn = document.getElementById("textSearchSaveBtn");
+      btn.disabled = true;
+      btn.textContent = "Searching…";
+      textResult.hidden = true;
+
+      fetchJSON("/api/search", {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+      })
+        .then(function () {
+          // GET /api/search expects ?q= param; use URL search params
+          var params = new URLSearchParams({ q: q, limit: String(limit) });
+          return fetchJSON("/api/search?" + params.toString());
+        })
+        .then(function (data) {
+          renderTextSearchResult(data);
+          textResult.hidden = false;
+          var saveBtn = document.getElementById("textSearchSaveBtn");
+          if (saveBtn) {
+            saveBtn.hidden = false;
+            saveBtn.dataset.query = q;
+            saveBtn.dataset.limit = String(limit);
+          }
+          toast("Found " + (data.sold_count || 0) + " sold + " + (data.active_count || 0) + " active comps", "success");
+        })
+        .catch(function (err) {
+          toast("Search failed: " + err.message, "error");
+        })
+        .finally(function () {
+          btn.disabled = false;
+          btn.textContent = "Search comps";
+        });
+    });
+
+    // Text search save-as-item button (wired once result renders)
+    var textSaveBtnObserver = new MutationObserver(function () {
+      var btn = document.getElementById("textSearchSaveBtn");
+      if (btn && btn._wired) return;
+      if (btn) {
+        btn._wired = true;
+        btn.addEventListener("click", function () {
+          var q = this.dataset.query || "";
+          var limit = parseInt(this.dataset.limit, 10) || 20;
+          if (!q) { toast("No search query to save", "error"); return; }
+          openSaveIdentificationModal(null, null, q, limit, "text");
+        });
+      }
+    });
+    textSaveBtnObserver.observe(document.getElementById("textSearchResult"), { childList: true, subtree: false });
+
+    // ── Photo search ──
+    // Click-to-browse
+    photoPlaceholder.addEventListener("click", function () {
+      photoInput.click();
+    });
+
+    // Drag and drop
+    photoDropZone.addEventListener("dragover", function (e) {
+      e.preventDefault();
+      photoDropZone.classList.add("dragover");
+    });
+    photoDropZone.addEventListener("dragleave", function () {
+      photoDropZone.classList.remove("dragover");
+    });
+    photoDropZone.addEventListener("drop", function (e) {
+      e.preventDefault();
+      photoDropZone.classList.remove("dragover");
+      var files = e.dataTransfer.files;
+      if (files.length) handlePhotoFile(files[0]);
+    });
+
+    // File input
+    photoInput.addEventListener("change", function () {
+      if (photoInput.files.length) handlePhotoFile(photoInput.files[0]);
+    });
+
+    // Photo form submit
+    photoForm.addEventListener("submit", function (e) {
+      e.preventDefault();
+      if (!photoPreview.src || photoPreview.src === window.URL.createObjectURL(new File([], ""))) {
+        toast("Select an image first", "error");
+        return;
+      }
+      var btn = document.getElementById("photoSearchBtn");
+      btn.disabled = true;
+      btn.textContent = "Identifying…";
+      photoResult.hidden = true;
+      photoStatus.textContent = "Sending to Claude for identification…";
+
+      var imageB64 = photoPreview.dataset.b64 || "";
+      if (!imageB64) {
+        toast("Image data missing — re-select the photo", "error");
+        btn.disabled = false;
+        btn.textContent = "Identify + search comps";
+        return;
+      }
+
+      var limit = 20;
+
+      fetchJSON("/api/search/photo", {
+        method: "POST",
+        body: JSON.stringify({
+          image_b64: imageB64,
+          image_mime: "image/jpeg",
+          limit: limit,
+        }),
+      })
+        .then(function (data) {
+          renderPhotoSearchResult(data);
+          photoResult.hidden = false;
+          photoStatus.textContent = "";
+          var photoSaveBtn = document.getElementById("photoSaveBtn");
+          if (photoSaveBtn) {
+            photoSaveBtn.hidden = false;
+            photoSaveBtn.dataset.b64 = imageB64;
+            photoSaveBtn.dataset.mime = "image/jpeg";
+          }
+          toast("Identification complete — " + (data.comps.sold_count || 0) + " sold comps found", "success");
+        })
+        .catch(function (err) {
+          photoStatus.textContent = "";
+          toast("Photo search failed: " + err.message, "error");
+        })
+        .finally(function () {
+          btn.disabled = false;
+          btn.textContent = "Identify + search comps";
+        });
+    });
+
+    // Photo clear
+    photoClearBtn.addEventListener("click", function () {
+      photoInput.value = "";
+      photoPreview.src = "";
+      photoPreview.dataset.b64 = "";
+      photoPreview.hidden = true;
+      photoPlaceholder.hidden = false;
+      photoBtn.disabled = true;
+      photoClearBtn.disabled = true;
+      photoResult.hidden = true;
+      photoResult.innerHTML = "";
+      photoStatus.textContent = "";
+      var photoSaveBtn = document.getElementById("photoSaveBtn");
+      if (photoSaveBtn) photoSaveBtn.hidden = true;
+    });
+
+    function handlePhotoFile(file) {
+      if (!file.type.match(/^image\/(jpeg|png|webp)$/)) {
+        toast("Please select a JPEG, PNG, or WEBP image", "error");
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        toast("Image too large — max 10MB", "error");
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        var result = e.target.result;
+        if (typeof result === "string") {
+          photoPreview.dataset.b64 = result.split(",")[1] || result;
+          photoPreview.src = result;
+          photoPreview.onload = function () {
+            photoPreview.hidden = false;
+            photoPlaceholder.hidden = true;
+            photoBtn.disabled = false;
+            photoClearBtn.disabled = false;
+            photoStatus.textContent = file.name + " (" + (file.size / 1024 / 1024).toFixed(1) + " MB)";
+          };
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  }
+
+  // ── Render text search results ──
+  function renderTextSearchResult(data) {
+    var el = document.getElementById("textSearchResult");
+    var soldAvg = data.sold_avg || 0;
+    var activeAvg = data.active_avg || 0;
+    var soldCount = data.sold_count || 0;
+    var activeCount = data.active_count || 0;
+
+    var comps = (data.sold_items || []).concat(data.active_items || []);
+    var itemsHtml = comps.slice(0, 20).map(function (ci) {
+      var img = ci.image_url ? '<img src="' + escapeHtml(ci.image_url) + '" alt="" loading="lazy" />' : "";
+      return (
+        '<div class="comp-item">' +
+        img +
+        '<div class="comp-item-title">' + escapeHtml(ci.title || "Unknown") + "</div>" +
+        '<div class="comp-item-price">' + fmtMoney(ci.price) + "</div>" +
+        '<div class="comp-item-condition">' + escapeHtml(ci.condition || "") + "</div>" +
+        "</div>"
+      );
+    }).join("");
+
+    el.innerHTML =
+      '<div class="search-result-header">' +
+      '<div class="search-result-title">Comps for: ' + escapeHtml(data.query) + "</div>" +
+      '<div class="search-result-stats">' +
+      '<span class="search-stat"><b>' + fmtMoney(soldAvg) + '</b> sold avg (' + soldCount + ' listings)</span>' +
+      '<span class="search-stat"><b>' + fmtMoney(activeAvg) + '</b> active avg (' + activeCount + ' listings)</span>' +
+      "</div>" +
+      "</div>" +
+      '<div class="comp-items">' + itemsHtml + "</div>" +
+      '<div class="search-save-row">' +
+      '<button class="btn btn-primary" id="textSearchSaveBtn">Save as inventory item</button>' +
+      '<span class="search-save-note">Save the top comp as a tracked item</span>' +
+      "</div>";
+
+    // Wire the save button inside the rendered result
+    document.getElementById("textSearchSaveBtn").addEventListener("click", function () {
+      openSaveIdentificationModal(null, null, data.query, 20, "text");
+    });
+  }
+
+  // ── Render photo search results ──
+  function renderPhotoSearchResult(data) {
+    var el = document.getElementById("photoSearchResult");
+    var id = data.identification || {};
+    var comps = data.comps || {};
+    var analysis = data.analysis || {};
+    var refinedQuery = data.refined_query || "";
+
+    var soldAvg = comps.sold_avg || 0;
+    var activeAvg = comps.active_avg || 0;
+    var soldCount = comps.sold_count || 0;
+    var activeCount = comps.active_count || 0;
+
+    var dealScore = analysis.deal_score || "UNKNOWN";
+    var dealClass = "deal-" + (dealScore && dealScore !== "UNKNOWN" ? dealScore.toLowerCase() : "unknown");
+
+    // Category badge
+    var catBadge = id.category && id.category !== "Other"
+      ? '<span class="id-category">' + escapeHtml(id.category) + "</span>"
+      : "";
+
+    // Condition badge
+    var condBadge = id.condition && id.condition !== "unknown"
+      ? '<span class="id-condition">' + escapeHtml(id.condition) + "</span>"
+      : "";
+
+    var compsList = (comps.sold_items || []).concat(comps.active_items || []);
+    var itemsHtml = compsList.slice(0, 20).map(function (ci) {
+      var img = ci.image_url ? '<img src="' + escapeHtml(ci.image_url) + '" alt="" loading="lazy" />' : "";
+      return (
+        '<div class="comp-item">' +
+        img +
+        '<div class="comp-item-title">' + escapeHtml(ci.title || "Unknown") + "</div>" +
+        '<div class="comp-item-price">' + fmtMoney(ci.price) + "</div>" +
+        '<div class="comp-item-condition">' + escapeHtml(ci.condition || "") + "</div>" +
+        "</div>"
+      );
+    }).join("");
+
+    el.innerHTML =
+      '<div class="search-result-header">' +
+      '<div class="search-result-title">' + escapeHtml(id.item_name || "Unknown item") + "</div>" +
+      '<div class="search-result-sub">' +
+      (id.brand ? escapeHtml(id.brand) + " " : "") +
+      (id.model ? escapeHtml(id.model) : "") +
+      catBadge + condBadge +
+      (refinedQuery && refinedQuery !== id.ebay_search_query
+        ? '<span class="refined-query-note">Refined query: ' + escapeHtml(refinedQuery) + "</span>"
+        : "") +
+      "</div>" +
+      "</div>" +
+
+      // Identification block
+      '<div class="id-block">' +
+      '<div class="id-row"><span class="id-label">Confidence</span><span class="id-value">' + (id.confidence || "low") + "</span></div>" +
+      (id.capacity_gb ? '<div class="id-row"><span class="id-label">Capacity</span><span class="id-value">' + id.capacity_gb + ' GB</span></div>' : "") +
+      (id.speed_mhz ? '<div class="id-row"><span class="id-label">Speed</span><span class="id-value">' + escapeHtml(id.speed_mhz) + "</span></div>" : "") +
+      (id.form_factor ? '<div class="id-row"><span class="id-label">Form Factor</span><span class="id-value">' + escapeHtml(id.form_factor) + "</span></div>" : "") +
+      (id.era ? '<div class="id-row"><span class="id-label">Era</span><span class="id-value">' + escapeHtml(id.era) + "</span></div>" : "") +
+      "</div>" +
+
+      // Comps summary
+      '<div class="comp-summary">' +
+      '<div class="comp-stat"><div class="comp-stat-label">Sold Avg</div><div class="comp-stat-value">' + fmtMoney(soldAvg) + "</div></div>" +
+      '<div class="comp-stat"><div class="comp-stat-label">Active Avg</div><div class="comp-stat-value">' + fmtMoney(activeAvg) + "</div></div>" +
+      '<div class="comp-stat"><div class="comp-stat-label">Sold Listings</div><div class="comp-stat-value">' + soldCount + "</div></div>" +
+      '<div class="comp-stat"><div class="comp-stat-label">Active Listings</div><div class="comp-stat-value">' + activeCount + "</div></div>" +
+      "</div>" +
+
+      // Analysis block (if available)
+      (analysis && analysis.deal_score
+        ? '<div class="analysis-block">' +
+        '<div class="analysis-header"><span class="deal-badge ' + dealClass + '">' + dealScore + "</span> <span class=\"analysis-label\">Pricing Analysis</span></div>" +
+        '<div class="analysis-row"><span class="analysis-label">Market Value</span><span class="analysis-value">' + fmtMoney(analysis.market_value_low) + " – " + fmtMoney(analysis.market_value_high) + "</span></div>" +
+        (analysis.suggested_list_price ? '<div class="analysis-row"><span class="analysis-label">Suggested List Price</span><span class="analysis-value">' + fmtMoney(analysis.suggested_list_price) + "</span></div>" : "") +
+        (analysis.profit_estimate_low !== undefined ? '<div class="analysis-row"><span class="analysis-label">Profit Estimate</span><span class="analysis-value">' + fmtMoney(analysis.profit_estimate_low) + " – " + fmtMoney(analysis.profit_estimate_high) + "</span></div>" : "") +
+        (analysis.deal_score_reason ? '<div class="analysis-row"><span class="analysis-label">Why ' + dealScore + "</span><span class=\"analysis-value\">" + escapeHtml(analysis.deal_score_reason) + "</span></div>" : "") +
+        (analysis.best_platforms && analysis.best_platforms.length ? '<div class="analysis-row"><span class="analysis-label">Best Platforms</span><span class="analysis-value">' + escapeHtml(analysis.best_platforms.join(", ")) + "</span></div>" : "") +
+        (analysis.selling_tips && analysis.selling_tips.length ? '<div class="analysis-row"><span class="analysis-label">Selling Tips</span><span class="analysis-value tips">' + analysis.selling_tips.map(function (t) { return "• " + escapeHtml(t); }).join("<br>") + "</span></div>" : "") +
+        (analysis.keywords_for_listing && analysis.keywords_for_listing.length ? '<div class="analysis-row"><span class="analysis-label">Listing Keywords</span><span class="analysis-value keywords">' + analysis.keywords_for_listing.map(function (k) { return escapeHtml(k); }).join(", ") + "</span></div>" : "") +
+        (analysis.watch_out_for ? '<div class="analysis-row"><span class="analysis-label">Watch Out For</span><span class="analysis-value">' + escapeHtml(analysis.watch_out_for) + "</span></div>" : "") +
+        "</div>"
+        : "") +
+
+      // Comps items
+      '<div class="comp-items">' + itemsHtml + "</div>" +
+
+      // Save row
+      '<div class="search-save-row">' +
+      '<button class="btn btn-primary" id="photoSaveBtn">Save as inventory item</button>' +
+      '<span class="search-save-note">Save as tracked item with auto-filled identification + comps</span>' +
+      "</div>";
+
+    // Wire the photo save button once the result renders (via MutationObserver)
+    var photoSaveBtnObserver = new MutationObserver(function () {
+      var btn = document.getElementById("photoSaveBtn");
+      if (btn && btn._wired) return;
+      if (btn) {
+        btn._wired = true;
+        btn.addEventListener("click", function () {
+          openSaveIdentificationModal(
+            data.identification,
+            data.comps,
+            data.analysis,
+            20,
+            "photo"
+          );
+        });
+      }
+    });
+    photoSaveBtnObserver.observe(document.getElementById("photoSearchResult"), { childList: true, subtree: false });
+  }
+
+  // ── Save identification as inventory item modal ──
+  var saveModal = null;
+
+  function openSaveIdentificationModal(identification, comps, analysis, limit, source) {
+    if (!saveModal) {
+      saveModal = document.createElement("div");
+      saveModal.className = "modal-overlay";
+      saveModal.id = "saveModal";
+      saveModal.innerHTML =
+        '<div class="modal">' +
+        '<h2>' + (source === "photo" ? "Save Identified Item" : "Save Search Result") + "</h2>" +
+        '<p class="subtitle" style="margin-bottom:1rem">' +
+        (source === "photo"
+          ? "Item identified from photo. Auto-fill identification and comp data, then set acquisition cost to calculate profit."
+          : "Save this search result as a tracked inventory item.") +
+        "</p>" +
+        '<form id="saveForm" class="modal-form" autocomplete="off">' +
+        '<input type="hidden" name="source" id="saveSource" />' +
+        '<input type="hidden" name="identification" id="saveIdentification" />' +
+        '<input type="hidden" name="comps" id="saveComps" />' +
+        '<input type="hidden" name="analysis" id="saveAnalysis" />' +
+        '<input type="hidden" name="ebay_query" id="saveEbayQuery" />' +
+        '<div class="field-row">' +
+        '<label class="field"><span>Table Type</span><select name="table_type" id="saveTableType" class="input">' +
+        '<option value="goodwill_flips">Goodwill Flips</option>' +
+        '<option value="personal_assets">Personal Assets</option>' +
+        '<option value="liquidation_pallets">Liquidation Pallets</option>' +
+        '<option value="ram_ssd_stockpile">RAM/SSD Stockpile</option>' +
+        '<option value="device_farm">Device Farm</option>' +
+        "</select></span></div>" +
+        '<label class="field"><span>Name</span><input type="text" name="name" id="saveName" class="input" required /></span></div>' +
+        '<div class="field-row">' +
+        '<label class="field"><span>Make</span><input type="text" name="make" id="saveMake" class="input" /></span></div>' +
+        '<label class="field"><span>Model</span><input type="text" name="model" id="saveModel" class="input" /></span></div>' +
+        '<div class="field-row">' +
+        '<label class="field"><span>Category</span><input type="text" name="category" id="saveCategory" class="input" /></span></div>' +
+        '<label class="field"><span>Condition</span><select name="condition" id="saveCondition" class="input">' +
+        '<option value="">—</option>' +
+        '<option value="like_new">Like New</option>' +
+        '<option value="good">Good</option>' +
+        '<option value="fair">Fair</option>' +
+        '<option value="poor">Poor</option>' +
+        "</select></span></div>" +
+        '<label class="field"><span>Acquisition Cost ($)</span><input type="number" step="0.01" name="acquisition_cost_cents" id="saveCost" class="input" placeholder="0.00" /></span></div>' +
+        '<div class="field-row">' +
+        '<label class="field"><span>Buy Source</span><input type="text" name="buy_source" id="saveSourceField" class="input" /></span></div>' +
+        '<label class="field"><span>eBay Search Query</span><input type="text" name="search_query" id="saveSearchQuery" class="input" /></span></div>' +
+        '<label class="field"><span>Notes</span><textarea name="notes" id="saveNotes" class="input" rows="2"></textarea></span></div>' +
+        '<div class="modal-actions">' +
+        '<button type="button" class="btn" id="saveCancelBtn">Cancel</button>' +
+        '<button type="submit" class="btn btn-primary" id="saveSubmitBtn">Save Item</button>' +
+        "</div>" +
+        "</form>" +
+        '<div id="saveResult" class="comp-result" hidden></div>' +
+        "</div>";
+      document.body.appendChild(saveModal);
+    }
+
+    // Pre-fill from identification/comps if available
+    var nameField = document.getElementById("saveName");
+    var makeField = document.getElementById("saveMake");
+    var modelField = document.getElementById("saveModel");
+    var catField = document.getElementById("saveCategory");
+    var condField = document.getElementById("saveCondition");
+    var costField = document.getElementById("saveCost");
+    var sourceField = document.getElementById("saveSourceField");
+    var queryField = document.getElementById("saveSearchQuery");
+    var notesField = document.getElementById("saveNotes");
+
+    nameField.value = "";
+    makeField.value = "";
+    modelField.value = "";
+    catField.value = "";
+    condField.value = "";
+    costField.value = "";
+    sourceField.value = "";
+    queryField.value = "";
+    notesField.value = "";
+
+    var ebayQuery = "";
+    if (identification) {
+      nameField.value = identification.item_name || "";
+      makeField.value = identification.brand || "";
+      modelField.value = identification.model || "";
+      catField.value = identification.category || "";
+      condField.value = identification.condition || "";
+      ebayQuery = identification.ebay_search_query || identification.item_name || "";
+    }
+    if (comps) {
+      queryField.value = ebayQuery;
+    }
+    if (source === "photo") {
+      sourceField.value = "Photo scan";
+      notesField.value = (identification ? ("Identified: " + (identification.item_name || "") + ". ") : "") +
+        (analysis && analysis.deal_score ? ("Deal score: " + analysis.deal_score + ". ") : "") +
+        (analysis && analysis.watch_out_for ? ("Watch: " + analysis.watch_out_for) : "");
+    } else {
+      sourceField.value = "eBay comp search";
+      notesField.value = "Found via eBay comp search: " + ebayQuery;
+    }
+
+    document.getElementById("saveSource").value = source;
+    document.getElementById("saveIdentification").value = identification ? JSON.stringify(identification) : "{}";
+    document.getElementById("saveComps").value = comps ? JSON.stringify(comps) : "{}";
+    document.getElementById("saveAnalysis").value = analysis ? JSON.stringify(analysis) : "{}";
+    document.getElementById("saveEbayQuery").value = ebayQuery;
+
+    var modal = document.getElementById("saveModal");
+    modal.hidden = false;
+
+    // Wire up once
+    if (!saveModal._wired) {
+      saveModal._wired = true;
+      var form = document.getElementById("saveForm");
+      var cancel = document.getElementById("saveCancelBtn");
+      var submit = document.getElementById("saveSubmitBtn");
+
+      cancel.addEventListener("click", function () {
+        modal.hidden = true;
+      });
+      modal.addEventListener("click", function (e) {
+        if (e.target === modal) modal.hidden = true;
+      });
+
+      submit.addEventListener("click", function (e) {
+        e.preventDefault();
+        var fData = new FormData(form);
+        var payload = {
+          identification: JSON.parse(document.getElementById("saveIdentification").value || "{}"),
+          comps: JSON.parse(document.getElementById("saveComps").value || "{}"),
+          analysis: JSON.parse(document.getElementById("saveAnalysis").value || "{}"),
+          table_type: fData.get("table_type") || "goodwill_flips",
+          acquisition_cost_cents: parseFloat(fData.get("acquisition_cost_cents")) || 0,
+          buy_source: fData.get("buy_source") || "Photo scan",
+          notes: fData.get("notes") || "",
+        };
+        var name = fData.get("name") || "Unknown item";
+        var make = fData.get("make") || "";
+        var model = fData.get("model") || "";
+        var category = fData.get("category") || "";
+        var condition = fData.get("condition") || "unknown";
+        var searchQuery = fData.get("search_query") || (payload.identification.item_name || "");
+
+        payload.identification.item_name = name;
+        payload.identification.brand = make;
+        payload.identification.model = model;
+        payload.identification.category = category;
+        payload.identification.condition = condition;
+        payload.identification.ebay_search_query = searchQuery;
+
+        submit.disabled = true;
+        submit.textContent = "Saving…";
+        document.getElementById("saveResult").hidden = true;
+
+        fetchJSON("/api/search/save-identification", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        })
+          .then(function (data) {
+            var resEl = document.getElementById("saveResult");
+            resEl.innerHTML =
+              '<div class="search-result-header">' +
+              '<div class="search-result-title">Item saved!</div>' +
+              '</div>' +
+              '<div class="comp-summary">' +
+              '<div class="comp-stat"><div class="comp-stat-label">Item ID</div><div class="comp-stat-value">' + data.id + "</div></div>" +
+              '<div class="comp-stat"><div class="comp-stat-label">Name</div><div class="comp-stat-value">' + escapeHtml(data.item.name) + "</div></div>" +
+              '<div class="comp-stat"><div class="comp-stat-label">Table</div><div class="comp-stat-value">' + data.item.table_type + "</div></div>" +
+              "</div>";
+            resEl.hidden = false;
+            toast("Item saved (ID " + data.id + ")", "success");
+            // Reload the table to show the new item
+            loadTable(currentTable, 0);
+          })
+          .catch(function (err) {
+            toast("Save failed: " + err.message, "error");
+          })
+          .finally(function () {
+            submit.disabled = false;
+            submit.textContent = "Save Item";
+          });
+      });
+    }
+
+    // Focus name field
+    setTimeout(function () { nameField.focus(); }, 50);
   }
 
   // Wire the delegated row-action clicks after the table renderer is defined.

@@ -1,19 +1,20 @@
 """
-Neon multi-DB connection helper for Hardware Comps Dashboard.
+Single Neon DB connection helper for Hardware Comps Dashboard.
 
-One Neon project, three databases:
-  - hcd_inventory    : inventory_items, price_history
-  - hcd_comps_cache  : eBay comps cache (query-keyed)
-  - hcd_memory_market: DDR3/4/5 reference spot prices + supply-side events
+One Neon database holds everything durable:
+  - inventory_items, price_history          — user inventory + trend data
+  - comps_cache, comps_rate_limits          — eBay comps cache (local SQLite
+                                              handles the hot path; this is
+                                              the Neon-side backup mirror)
+  - memory_prices, memory_events            — DDR generation spot prices,
+                                              supply-side event log
+
+Local SQLite (data/comps_cache.db) still handles the hot eBay-response cache
+for resilience; this Neon DB is the durable store.
 
 Env:
-  APP_NEON_URL       — project base URL (same-project DBs share this)
-  INVENTORY_DB_URL   — override for inventory DB URL
-  COMPS_CACHE_DB_URL — override for comps cache DB URL
-  MEMORY_MARKET_DB_URL — override for memory market DB URL
-
-Same-project Neon DBs are reachable as {APP_NEON_URL}/<dbname> when the
-project allows it; otherwise set each DB URL explicitly via env.
+  DATABASE_URL  — single Neon connection URL (postgresql://...)
+                  Also accepted as APP_NEON_URL for compat with earlier config.
 """
 
 import logging
@@ -21,74 +22,36 @@ import os
 from functools import lru_cache
 
 import psycopg2
-from psycopg2 import sql
 
 logger = logging.getLogger("hcd.db_neon")
 
-# ── Connection URLs ──────────────────────────────────────────────────────────
+_DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("APP_NEON_URL", "")
 
-# Read from env; fall back to APP_NEON_URL-derived URLs.
-_APP_NEON_URL = os.environ.get("APP_NEON_URL", "")
-
-_INVENTORY_DB_URL = os.environ.get("INVENTORY_DB_URL") or (
-    f"{_APP_NEON_URL}/hcd_inventory" if _APP_NEON_URL else ""
-)
-_COMPS_CACHE_DB_URL = os.environ.get("COMPS_CACHE_DB_URL") or (
-    f"{_APP_NEON_URL}/hcd_comps_cache" if _APP_NEON_URL else ""
-)
-_MEMORY_MARKET_DB_URL = os.environ.get("MEMORY_MARKET_DB_URL") or (
-    f"{_APP_NEON_URL}/hcd_memory_market" if _APP_NEON_URL else ""
-)
-
-# Allow explicit override even if derived URL looks plausible
-if os.environ.get("INVENTORY_DB_URL"):
-    _INVENTORY_DB_URL = os.environ["INVENTORY_DB_URL"]
-if os.environ.get("COMPS_CACHE_DB_URL"):
-    _COMPS_CACHE_DB_URL = os.environ["COMPS_CACHE_DB_URL"]
-if os.environ.get("MEMORY_MARKET_DB_URL"):
-    _MEMORY_MARKET_DB_URL = os.environ["MEMORY_MARKET_DB_URL"]
+if os.environ.get("DATABASE_URL"):
+    _DATABASE_URL = os.environ["DATABASE_URL"]
 
 
 def _url_is_usable(url: str) -> bool:
     return bool(url and url.startswith("postgresql://"))
 
 
-# ── Per-DB connection cache (process-local, since Neon HTTP is not used here) ─
-
-@lru_cache(maxsize=3)
-def _cached_conn(url: str):
-    """Return a psycopg2 connection for the given URL. Cached per URL."""
-    if not _url_is_usable(url):
-        raise RuntimeError(f"Bad DB URL: {url[:40]}...")
-    return psycopg2.connect(url)
+@lru_cache(maxsize=1)
+def _conn():
+    if not _url_is_usable(_DATABASE_URL):
+        raise RuntimeError(f"DATABASE_URL not configured (got: {_DATABASE_URL[:40]}...)")
+    return psycopg2.connect(_DATABASE_URL)
 
 
-def get_inventory_conn():
-    if not _url_is_usable(_INVENTORY_DB_URL):
-        raise RuntimeError("INVENTORY_DB_URL not configured")
-    return _cached_conn(_INVENTORY_DB_URL)
+def get_conn():
+    return _conn()
 
 
-def get_comps_conn():
-    if not _url_is_usable(_COMPS_CACHE_DB_URL):
-        raise RuntimeError("COMPS_CACHE_DB_URL not configured")
-    return _cached_conn(_COMPS_CACHE_DB_URL)
-
-
-def get_memory_conn():
-    if not _url_is_usable(_MEMORY_MARKET_DB_URL):
-        raise RuntimeError("MEMORY_MARKET_DB_URL not configured")
-    return _cached_conn(_MEMORY_MARKET_DB_URL)
-
-
-# ── Schema init ──────────────────────────────────────────────────────────────
-
-def init_inventory_db():
-    """Create inventory schema tables if they don't exist."""
-    if not _url_is_usable(_INVENTORY_DB_URL):
-        logger.warning("INVENTORY_DB_URL not set — skipping inventory init")
+def init_db():
+    """Create all schema tables in one Neon DB."""
+    if not _url_is_usable(_DATABASE_URL):
+        logger.warning("DATABASE_URL not set — skipping DB init")
         return
-    conn = get_inventory_conn()
+    conn = get_conn()
     try:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS inventory_items (
@@ -141,27 +104,12 @@ def init_inventory_db():
 
             CREATE INDEX IF NOT EXISTS price_history_at_idx
                 ON price_history (snapshot_at DESC);
-        """)
-        conn.commit()
-        logger.info("Inventory DB initialized")
-    except Exception as e:
-        logger.error(f"Inventory DB init failed: {e}")
-    finally:
-        conn.close()
 
-
-def init_comps_db():
-    if not _url_is_usable(_COMPS_CACHE_DB_URL):
-        logger.warning("COMPS_CACHE_DB_URL not set — skipping comps cache init")
-        return
-    conn = get_comps_conn()
-    try:
-        conn.execute("""
             CREATE TABLE IF NOT EXISTS comps_cache (
                 id          SERIAL PRIMARY KEY,
                 cache_key   TEXT NOT NULL UNIQUE,
                 query_text  TEXT NOT NULL,
-                endpoint    TEXT NOT NULL,          -- 'comps' or 'sold'
+                endpoint    TEXT NOT NULL,
                 response_json JSONB NOT NULL,
                 item_count  INTEGER,
                 created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -180,29 +128,14 @@ def init_comps_db():
                 request_count INTEGER NOT NULL DEFAULT 1,
                 PRIMARY KEY (token_hash, window_start)
             );
-        """)
-        conn.commit()
-        logger.info("Comps cache DB initialized")
-    except Exception as e:
-        logger.error(f"Comps cache DB init failed: {e}")
-    finally:
-        conn.close()
 
-
-def init_memory_db():
-    if not _url_is_usable(_MEMORY_MARKET_DB_URL):
-        logger.warning("MEMORY_MARKET_DB_URL not set — skipping memory market init")
-        return
-    conn = get_memory_conn()
-    try:
-        conn.execute("""
             CREATE TABLE IF NOT EXISTS memory_prices (
                 id              SERIAL PRIMARY KEY,
                 generation      TEXT NOT NULL CHECK (generation IN ('DDR3','DDR4','DDR5')),
-                form_factor     TEXT,                          -- 'SODIMM','DIMM','M.2','2.5"','U.2'
+                form_factor     TEXT,
                 capacity_gb     INTEGER,
                 speed_mhz       TEXT,
-                spot_avg_cents  INTEGER,                       -- rolling comp average
+                spot_avg_cents  INTEGER,
                 source_query    TEXT,
                 observed_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -216,8 +149,8 @@ def init_memory_db():
 
             CREATE TABLE IF NOT EXISTS memory_events (
                 id             SERIAL PRIMARY KEY,
-                event_type     TEXT NOT NULL,                 -- 'tariff','fab_capacity','price_spike','price_drop'
-                generation     TEXT,                          -- 'DDR3','DDR4','DDR5' or NULL for general
+                event_type     TEXT NOT NULL,
+                generation     TEXT,
                 headline       TEXT NOT NULL,
                 body           TEXT,
                 source_url     TEXT,
@@ -229,8 +162,8 @@ def init_memory_db():
                 ON memory_events (observed_at DESC);
         """)
         conn.commit()
-        logger.info("Memory market DB initialized")
+        logger.info("Single Neon DB initialized (all tables)")
     except Exception as e:
-        logger.error(f"Memory market DB init failed: {e}")
+        logger.error(f"DB init failed: {e}")
     finally:
         conn.close()

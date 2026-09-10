@@ -7,12 +7,10 @@
 args = ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "$PORT"]
 
 [env]
-# Neon DBs (one project, multiple databases)
-# APP_NEON_URL is the project base URL; individual DBs are
-# {APP_NEON_URL}/<dbname>  (Neon allows this for same-project DBs)
-APP_NEON_URL = "postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech"
-# Alternatively per-DB URLs:
-# INVENTORY_DB_URL, COMPS_CACHE_DB_URL, MEMORY_MARKET_DB_URL
+# Neon DB — single database; everything in one DB via DATABASE_URL
+DATABASE_URL = ""
+# Compat: also accepts APP_NEON_URL (project base URL)
+APP_NEON_URL = ""
 
 # eBay (embedded client, not proxy)
 EBAY_CLIENT_ID = ""

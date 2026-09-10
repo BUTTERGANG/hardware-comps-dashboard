@@ -8,10 +8,10 @@ with live eBay comps, per-item price history trends, and a RAM/SSD stockpile tra
 - FastAPI (Python 3.11+)
 - Jinja2 server-rendered HTML (dark mode, design DNA from Replit starter)
 - eBay Browse API (embedded OAuth2 client, not via proxy)
-- Neon PostgreSQL — one project, three databases:
-  - `hcd_inventory` — inventory tables + per-item price history
-  - `hcd_comps_cache` — eBay comps cache (query-keyed, TTL)
-  - `hcd_memory_market` — DDR3/4/5 reference spot prices, supply-side events
+- Neon PostgreSQL — single database (`DATABASE_URL`):
+  - inventory tables + per-item price history
+  - eBay comps cache (query-keyed, TTL, local SQLite backup)
+  - DDR3/4/5 reference spot prices, supply-side events
 - Replit deployment (uv, $PORT, SITE_URL)
 
 ## Inventory tables (all in hcd_inventory, unified via `table_type`)

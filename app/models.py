@@ -107,3 +107,34 @@ class MemoryEvent(BaseModel):
     body: Optional[str] = None
     source_url: Optional[str] = None
     observed_at: Optional[str] = None
+
+
+# ── Search / photo ID result shapes (used by /api/search* routes) ────────────
+
+class SearchResult(BaseModel):
+    """Outbound shape for GET /api/search (text comps search)."""
+    query: str = ""
+    active_items: list[dict] = []
+    sold_items: list[dict] = []
+    active_avg: float = 0.0
+    sold_avg: float = 0.0
+    active_count: int = 0
+    sold_count: int = 0
+    suggested_query: str = ""
+
+
+class IdentificationResult(BaseModel):
+    """Outbound shape for photo identification (part of /api/search/photo response)."""
+    item_name: str = "Unknown"
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    category: str = "Other"
+    condition: str = "unknown"
+    capacity_gb: int = 0
+    speed_mhz: Optional[str] = None
+    form_factor: Optional[str] = None
+    color: Optional[str] = None
+    era: Optional[str] = None
+    ebay_search_query: str = ""
+    confidence: str = "low"
+    _raw: Optional[str] = None  # non-JSON fallback, internal use

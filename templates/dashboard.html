@@ -11,6 +11,55 @@
     <button class="btn" id="refreshCompsBtn">Refresh Comps (selected)</button>
     <button class="btn" id="batchCompsBtn">Run Batch Comps</button>
   </div>
+
+  <!-- ── Search panel (text + photo) ── -->
+  <div class="search-panel" id="searchPanel">
+    <div class="search-tabs" id="searchTabs">
+      <button class="search-tab active" data-tab="text">Text search</button>
+      <button class="search-tab" data-tab="photo">Photo search</button>
+    </div>
+
+    <!-- Text search -->
+    <div class="search-tab-panel active" id="textSearchPanel">
+      <form id="textSearchForm" class="search-form" autocomplete="off">
+        <div class="search-input-row">
+          <input type="text" name="q" id="textSearchInput" class="input search-input" placeholder="e.g. Samsung 8GB DDR4 SODIMM, Dell P2419H monitor, Nike Air Max 90" autocomplete="off" />
+          <button type="submit" class="btn btn-primary" id="textSearchBtn">Search comps</button>
+          <button type="button" class="btn" id="textSearchSaveBtn" hidden>Save as item</button>
+        </div>
+        <div class="search-options">
+          <label class="search-option">
+            <span>Limit</span>
+            <input type="number" name="limit" id="textSearchLimit" class="input search-limit" value="20" min="1" max="200" style="width:70px" />
+          </span>
+        </div>
+      </form>
+      <div id="textSearchResult" class="search-result" hidden></div>
+    </div>
+
+    <!-- Photo search -->
+    <div class="search-tab-panel" id="photoSearchPanel">
+      <form id="photoSearchForm" class="search-form" autocomplete="off">
+        <div class="photo-upload-area" id="photoDropZone">
+          <div class="photo-upload-inner" id="photoUploadInner">
+            <img id="photoPreview" class="photo-preview" alt="" hidden />
+            <div class="photo-placeholder" id="photoPlaceholder">
+              <div class="photo-icon">📷</div>
+              <p class="photo-hint">Drop an image here, or click to browse</p>
+              <p class="photo-subhint">JPEG, PNG, WEBP — max 10MB</p>
+            </div>
+          </div>
+          <input type="file" id="photoInput" accept="image/jpeg,image/png,image/webp" style="display:none" />
+        </div>
+        <div class="photo-form-actions">
+          <button type="submit" class="btn btn-primary" id="photoSearchBtn" disabled>Identify + search comps</button>
+          <button type="button" class="btn" id="photoClearBtn" disabled>Clear</button>
+          <span class="photo-status" id="photoStatus"></span>
+        </div>
+      </form>
+      <div id="photoSearchResult" class="search-result" hidden></div>
+    </div>
+  </div>
 </div>
 
 <div class="stats-row" id="statsRow">
