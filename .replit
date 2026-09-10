@@ -1,0 +1,39 @@
+run = "uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+entrypoint = "app/main.py"
+modules = ["python-3.11:v18-20230807-322e18b6"]
+
+[deployment]
+run = ["sh", "-c", "uv sync && uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT"]
+
+[[gitignore]]
+name = ".venv"
+
+[[gitignore]]
+name = "data/"
+
+[[gitignore]]
+name = "__pycache__"
+
+[[gitignore]]
+name = "*.pyc"
+
+[[gitignore]]
+name = ".local"
+
+[[gitignore]]
+name = "*.db"
+
+[[gitignore]]
+name = ".env"
+
+[[gitignore]]
+name = "node_modules"
+
+[[gitignore]]
+name = "*.sqlite"
+
+[[gitignore]]
+name = "*.sqlite-wal"
+
+[[gitignore]]
+name = "*.sqlite-shm"
