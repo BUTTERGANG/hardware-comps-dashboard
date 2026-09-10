@@ -1,9 +1,11 @@
 """
 Shared cross-app proxy client — from replit-starter-template.
 
-Reads PROXY_API_URL + PROXY_API_TOKEN. Used for any future cross-app calls
-(e.g., calling the shared eBay proxy instead of embedding — a later refactoring
-option). Not used by the dashboard's embedded eBay client today.
+Reads PROXY_API_URL + PROXY_API_TOKEN. NOT WIRED: this app embeds
+`ebay_client.py` directly (its own OAuth2 + Browse API client) and does
+not make any cross-app HTTP calls today. This module is a convenience
+for future refactoring only — if you want to route eBay calls through a
+shared proxy service later, wire this up. Otherwise ignore it.
 """
 
 import os

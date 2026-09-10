@@ -15,7 +15,7 @@ app/
   main.py        — FastAPI app, routes, lifespan
   ebay_client.py — eBay Browse API OAuth2 client (from ebay-api-proxy, adapted)
   cache.py       — per-item price history + comps cache (SQLite, local)
-  db_neon.py     — Neon multi-DB connection helper
+  db_neon.py     — single Neon DB connection helper
   models.py      — Pydantic models
   proxy.py       — shared cross-app proxy client (from replit starter)
 static/
@@ -31,8 +31,8 @@ data/            — .gitignore'd; local SQLite cache + memory_market_feed.json
 
 One Neon project, single database, connected via `db_neon.py`. Env vars:
 
-- `APP_NEON_URL` — Neon project base URL; individual DB URLs derived as
-  `{APP_NEON_URL}/<dbname>` when possible, else set explicitly.
+- `DATABASE_URL` — single Neon connection URL (postgresql://...). Primary env.
+  Also accepted as `APP_NEON_URL` for compat with earlier config.
 
 Databases:
 - Everything in one DB via `DATABASE_URL`:
