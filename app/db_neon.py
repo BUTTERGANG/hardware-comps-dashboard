@@ -19,9 +19,8 @@ Env:
 
 import logging
 import os
-from functools import lru_cache
-
-import psycopg2
+import psycopg
+from psycopg.rows import dict_row
 
 logger = logging.getLogger("hcd.db_neon")
 
@@ -35,11 +34,10 @@ def _url_is_usable(url: str) -> bool:
     return bool(url and url.startswith("postgresql://"))
 
 
-@lru_cache(maxsize=1)
 def _conn():
     if not _url_is_usable(_DATABASE_URL):
         raise RuntimeError(f"DATABASE_URL not configured (got: {_DATABASE_URL[:40]}...)")
-    return psycopg2.connect(_DATABASE_URL)
+    return psycopg.connect(_DATABASE_URL, row_factory=dict_row)
 
 
 def get_conn():

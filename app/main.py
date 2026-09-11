@@ -429,15 +429,15 @@ def list_inventory_db(table_type: str, limit: int, offset: int):
         if table_type:
             rows = conn.execute(
                 """SELECT * FROM inventory_items
-                   WHERE table_type = ? AND deleted_at IS NULL
-                   ORDER BY updated_at DESC LIMIT ? OFFSET ?""",
+                   WHERE table_type = %s AND deleted_at IS NULL
+                   ORDER BY updated_at DESC LIMIT %s OFFSET %s""",
                 (table_type, limit, offset),
             ).fetchall()
         else:
             rows = conn.execute(
                 """SELECT * FROM inventory_items
                    WHERE deleted_at IS NULL
-                   ORDER BY updated_at DESC LIMIT ? OFFSET ?""",
+                   ORDER BY updated_at DESC LIMIT %s OFFSET %s""",
                 (limit, offset),
             ).fetchall()
         conn.close()
@@ -454,7 +454,7 @@ def count_inventory_db(table_type: str):
         conn = get_conn()
         if table_type:
             n = conn.execute(
-                "SELECT COUNT(*) FROM inventory_items WHERE table_type = ? AND deleted_at IS NULL",
+                "SELECT COUNT(*) FROM inventory_items WHERE table_type = %s AND deleted_at IS NULL",
                 (table_type,),
             ).fetchone()[0]
         else:
@@ -474,7 +474,7 @@ def get_inventory_db(item_id: int):
     try:
         conn = get_conn()
         row = conn.execute(
-            "SELECT * FROM inventory_items WHERE id = ?", (item_id,)
+            "SELECT * FROM inventory_items WHERE id = %s", (item_id,)
         ).fetchone()
         conn.close()
         return dict(row) if row else None
@@ -492,13 +492,13 @@ def upsert_inventory_db(item: InventoryCreate):
         if item.id:
             conn.execute(
                 """UPDATE inventory_items SET
-                   table_type=?, name=?, category=?, make=?, model=?,
-                   serial_number=?, condition=?, notes=?,
-                   acquisition_cost_cents=?, buy_source=?,
-                   ebay_active_avg_cents=?, ebay_sold_avg_cents=?,
-                   ebay_last_looked_at=?, search_query=?,
-                   updated_at=?, metadata_json=?
-                   WHERE id=?""",
+                   table_type=%s, name=%s, category=%s, make=%s, model=%s,
+                   serial_number=%s, condition=%s, notes=%s,
+                   acquisition_cost_cents=%s, buy_source=%s,
+                   ebay_active_avg_cents=%s, ebay_sold_avg_cents=%s,
+                   ebay_last_looked_at=%s, search_query=%s,
+                   updated_at=%s, metadata_json=%s
+                   WHERE id=%s""",
                 (
                     item.table_type, item.name, item.category, item.make, item.model,
                     item.serial_number, item.condition, item.notes,
@@ -519,7 +519,8 @@ def upsert_inventory_db(item: InventoryCreate):
                     condition, notes, acquisition_cost_cents, buy_source,
                     ebay_active_avg_cents, ebay_sold_avg_cents,
                     ebay_last_looked_at, search_query, created_at, updated_at, metadata_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id""",
                 (
                     item.table_type, item.name, item.category, item.make, item.model,
                     item.serial_number, item.condition, item.notes,
@@ -530,7 +531,7 @@ def upsert_inventory_db(item: InventoryCreate):
                 ),
             )
             conn.commit()
-            new_id = row.lastrowid
+            new_id = row.fetchone()["id"]
             conn.close()
             return new_id
     except Exception as e:
@@ -553,7 +554,7 @@ def write_price_snapshot(item_id: int, result: dict):
             """INSERT INTO price_history
                (item_id, snapshot_at, sold_avg_cents, active_avg_cents,
                 sold_count, active_count, comps_query, comps_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT (item_id, snapshot_at) DO NOTHING""",
             (
                 item_id, now,
@@ -565,8 +566,8 @@ def write_price_snapshot(item_id: int, result: dict):
         )
         conn.execute(
             """UPDATE inventory_items SET
-               ebay_sold_avg_cents=?, ebay_active_avg_cents=?,
-               ebay_last_looked_at=? WHERE id=?""",
+               ebay_sold_avg_cents=%s, ebay_active_avg_cents=%s,
+               ebay_last_looked_at=%s WHERE id=%s""",
             (int(sold_avg * 100), int(active_avg * 100), now, item_id),
         )
         conn.commit()
@@ -582,7 +583,7 @@ def list_price_history_db(item_id: int, limit: int):
         conn = get_conn()
         rows = conn.execute(
             """SELECT * FROM price_history
-               WHERE item_id = ? ORDER BY snapshot_at DESC LIMIT ?""",
+               WHERE item_id = %s ORDER BY snapshot_at DESC LIMIT %s""",
             (item_id, limit),
         ).fetchall()
         conn.close()
@@ -601,7 +602,7 @@ def list_memory_prices_db(limit: int):
             """SELECT generation, form_factor, capacity_gb, speed_mhz,
                     spot_avg_cents, source_query, observed_at
                FROM memory_prices
-               ORDER BY observed_at DESC LIMIT ?""",
+               ORDER BY observed_at DESC LIMIT %s""",
             (limit,),
         ).fetchall()
         conn.close()
@@ -619,7 +620,7 @@ def list_memory_events_db(limit: int):
         rows = conn.execute(
             """SELECT event_type, generation, headline, body, source_url, observed_at
                FROM memory_events
-               ORDER BY observed_at DESC LIMIT ?""",
+               ORDER BY observed_at DESC LIMIT %s""",
             (limit,),
         ).fetchall()
         conn.close()
@@ -638,7 +639,7 @@ def write_memory_event(event_type: str, generation: str | None, headline: str, b
         conn.execute(
             """INSERT INTO memory_events
                (event_type, generation, headline, body, source_url, observed_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+                VALUES (%s, %s, %s, %s, %s, %s)""",
             (event_type, generation, headline, body, source_url, now),
         )
         conn.commit()
