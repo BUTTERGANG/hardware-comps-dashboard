@@ -180,7 +180,7 @@ async def health():
         "status": "ok",
         "service": "hardware-comps-dashboard",
         "version": "0.1.0",
-        "neon_connected": bool(APP_NEON_URL),
+        "neon_connected": bool(DATABASE_URL),
     }
 
 
