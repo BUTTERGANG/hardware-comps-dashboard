@@ -77,7 +77,13 @@ from app.models import (
     IdentificationResult,
 )
 from app.ebay_client import eBayClient
-from app.claude_client import ClaudeClient, identify_from_image, analyze_item, identify_and_comps
+from app.claude_client import (
+    CLAUDE_API_KEY,
+    ClaudeClient,
+    identify_from_image,
+    analyze_item,
+    identify_and_comps,
+)
 
 ebay = eBayClient()
 claude = ClaudeClient()

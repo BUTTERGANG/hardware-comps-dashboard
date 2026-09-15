@@ -97,8 +97,7 @@ def init_db():
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
 
-            CREATE INDEX IF NOT EXISTS price_history_item_idx
-                ON price_history (item_id, snapshot_at DESC);
+            DROP INDEX IF EXISTS price_history_item_idx;
 
             CREATE INDEX IF NOT EXISTS price_history_at_idx
                 ON price_history (snapshot_at DESC);
@@ -163,5 +162,34 @@ def init_db():
         logger.info("Single Neon DB initialized (all tables)")
     except Exception as e:
         logger.error(f"DB init failed: {e}")
+    finally:
+        conn.close()
+
+    _ensure_price_history_uniqueness()
+
+
+def _ensure_price_history_uniqueness():
+    """Back-fill the unique index price snapshots upsert against.
+
+    write_price_snapshot() uses ON CONFLICT (item_id, snapshot_at), which needs a
+    matching unique index. Kept out of the main DDL script so that a pre-existing
+    deployment holding duplicate snapshots fails loudly here instead of silently
+    aborting the rest of the schema init.
+    """
+    if not _url_is_usable(_DATABASE_URL):
+        return
+    conn = get_conn()
+    try:
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS price_history_item_snapshot_uidx
+                ON price_history (item_id, snapshot_at);
+        """)
+        conn.commit()
+    except Exception as e:
+        logger.error(
+            "Could not create price_history_item_snapshot_uidx (%s) — price "
+            "snapshots will fail to write until duplicate (item_id, snapshot_at) "
+            "rows are removed", e
+        )
     finally:
         conn.close()
