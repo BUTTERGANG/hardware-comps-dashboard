@@ -110,6 +110,11 @@ async def lifespan(app: FastAPI):
 # ── Templates + static ──────────────────────────────────────────────────────
 
 templates = Jinja2Templates(directory=PROJECT_DIR / "templates")
+# Cache-buster for static assets: changes on every process start, so a
+# restart always forces browsers to fetch the new JS/CSS instead of serving
+# a stale cached copy from the previous version's URL.
+ASSET_VERSION = str(int(time.time()))
+templates.env.globals["ASSET_VERSION"] = ASSET_VERSION
 app = FastAPI(
     title="Hardware Comps Dashboard",
     version="0.1.0",

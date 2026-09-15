@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
   <title>{% block title %}Hardware Comps Dashboard{% endblock %}</title>
-  <link rel="stylesheet" href="/static/css/base.css" />
+  <link rel="stylesheet" href="/static/css/base.css?v={{ ASSET_VERSION }}" />
 </head>
 <body>
   <header class="topbar">
@@ -28,6 +28,6 @@
     {% block content %}{% endblock %}
   </main>
 
-  <script src="/static/js/dashboard.js" defer></script>
+  <script src="/static/js/dashboard.js?v={{ ASSET_VERSION }}" defer></script>
 </body>
 </html>
