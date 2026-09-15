@@ -286,7 +286,11 @@ async def search_comps(request: Request, q: str = "", limit: int = 20):
     if not EBAY_CLIENT_ID or not EBAY_CLIENT_SECRET:
         raise HTTPException(503, "eBay keys not configured")
     query = q.strip()
-    result = await ebay.lookup_comps(query, limit)
+    try:
+        result = await ebay.lookup_comps(query, limit)
+    except Exception as e:
+        logger.error(f"Text search error (query={query!r}): {e}")
+        raise HTTPException(502, f"eBay lookup failed: {e}")
     # Normalize result to the SearchResult shape
     return {
         "query": query,
@@ -393,7 +397,11 @@ async def lookup_comps(request: Request, body: CompsLookupRequest):
     require_auth(request)
     if not EBAY_CLIENT_ID or not EBAY_CLIENT_SECRET:
         raise HTTPException(503, "eBay keys not configured")
-    result = await ebay.lookup_comps(body.query, body.limit, body.aspects, body.table_type)
+    try:
+        result = await ebay.lookup_comps(body.query, body.limit, body.aspects, body.table_type)
+    except Exception as e:
+        logger.error(f"Comps lookup error (query={body.query!r}): {e}")
+        raise HTTPException(502, f"eBay lookup failed: {e}")
     # Write price snapshot
     write_price_snapshot(body.item_id, result)
     return result
