@@ -842,15 +842,8 @@
       btn.textContent = "Searching…";
       textResult.hidden = true;
 
-      fetchJSON("/api/search", {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-      })
-        .then(function () {
-          // GET /api/search expects ?q= param; use URL search params
-          var params = new URLSearchParams({ q: q, limit: String(limit) });
-          return fetchJSON("/api/search?" + params.toString());
-        })
+      var params = new URLSearchParams({ q: q, limit: String(limit) });
+      fetchJSON("/api/search?" + params.toString())
         .then(function (data) {
           renderTextSearchResult(data);
           textResult.hidden = false;
