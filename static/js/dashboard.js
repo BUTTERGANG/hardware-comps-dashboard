@@ -6,7 +6,6 @@
   "use strict";
 
   var API_BASE = "";
-  var TOKEN = null;          // set from env / injected by server if needed
   var currentTable = "personal_assets";
   var currentPage = 0;
   var pageSize = 25;
@@ -33,41 +32,18 @@
     wireSearchPanel();
   });
 
-  /* ── Auth: read token from a global injected by server, or prompt once ── */
-  function getToken() {
-    if (TOKEN) return TOKEN;
-    // Try server-injected window.HCD_TOKEN (Jinja can write it into a script tag
-    // on the dashboard page if the user is already authenticated via session).
-    if (window.HCD_TOKEN) {
-      TOKEN = window.HCD_TOKEN;
-      return TOKEN;
-    }
-    // Fallback: prompt once and remember for the session.
-    var t = prompt("Enter HCD API token:");
-    if (t) {
-      TOKEN = t;
-      return t;
-    }
-    return null;
-  }
-
-  function authHeaders() {
-    var t = getToken();
-    return t ? { "Authorization": "Bearer " + t } : {};
-  }
-
+  /* ── Auth: session cookie is sent automatically by the browser ── */
   function apiPath(path) {
     return API_BASE + path;
   }
 
   function fetchJSON(path, options) {
     var opts = Object.assign({
-      headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+      headers: Object.assign({ "Content-Type": "application/json" }, (options && options.headers) || {}),
     }, options);
     return fetch(apiPath(path), opts).then(function (r) {
       if (r.status === 401) {
-        toast("Auth failed — check your API token", "error");
-        TOKEN = null;
+        window.location.href = "/login";
         throw new Error("unauthorized");
       }
       if (r.status === 403 || r.status === 404) {
@@ -85,9 +61,7 @@
   }
 
   function fetchText(path, options) {
-    var opts = Object.assign({
-      headers: authHeaders(),
-    }, options || {});
+    var opts = options || {};
     return fetch(apiPath(path), opts).then(function (r) {
       if (!r.ok) throw new Error("fetch failed " + r.status);
       return r.text();

@@ -9,9 +9,11 @@ Neon: single database (DATABASE_URL). Local SQLite cache for eBay comps (data/).
 """
 
 import asyncio
+import hmac
 import json
 import logging
 import os
+import secrets
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -22,9 +24,10 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
 # ── Logging ────────────────────────────────────────────────────────────────
 
@@ -57,11 +60,16 @@ COMPS_CACHE_DB = str(DATA_DIR / "comps_cache.db")
 EBAY_CLIENT_ID = os.environ.get("EBAY_CLIENT_ID", "")
 EBAY_CLIENT_SECRET = os.environ.get("EBAY_CLIENT_SECRET", "")
 
-# API auth tokens (comma-separated Bearer tokens)
-_HCD_API_TOKENS_RAW = os.environ.get("HCD_API_TOKENS", "")
-HCD_API_TOKENS = {t.strip() for t in _HCD_API_TOKENS_RAW.split(",") if t.strip()} if _HCD_API_TOKENS_RAW else set()
-if not HCD_API_TOKENS:
-    logger.warning("HCD_API_TOKENS unset — API routes will reject all requests")
+# Single-user email/password auth (session cookie)
+AUTH_EMAIL = os.environ.get("AUTH_EMAIL", "")
+AUTH_PASSWORD = os.environ.get("AUTH_PASSWORD", "")
+if not AUTH_EMAIL or not AUTH_PASSWORD:
+    logger.warning("AUTH_EMAIL / AUTH_PASSWORD unset — login will reject all requests")
+
+SESSION_SECRET = os.environ.get("SESSION_SECRET", "")
+if not SESSION_SECRET:
+    SESSION_SECRET = secrets.token_hex(32)
+    logger.warning("SESSION_SECRET unset — using a random secret; existing sessions will be invalidated on every restart")
 
 # ── Imports (local modules, lazy so startup fails loud on missing deps) ─────
 
@@ -132,18 +140,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET,
+    session_cookie="hcd_session",
+    same_site="lax",
+    https_only=bool(REPLIT_DOMAIN),
+    max_age=60 * 60 * 24 * 30,  # 30 days
+)
+
 
 # ── Auth helper ─────────────────────────────────────────────────────────────
 
-def check_token(request: Request) -> str:
-    """Return token if valid, else raise 401."""
-    header = request.headers.get("Authorization", "")
-    if not header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="missing Authorization: Bearer token")
-    token = header[7:]
-    if token not in HCD_API_TOKENS:
-        raise HTTPException(status_code=401, detail="invalid token")
-    return token
+def require_auth(request: Request) -> None:
+    """Raise 401 unless the session is authenticated."""
+    if not request.session.get("authenticated"):
+        raise HTTPException(status_code=401, detail="login required")
 
 
 # ── Lifespan ────────────────────────────────────────────────────────────────
@@ -161,6 +173,8 @@ async def lifespan(app: FastAPI):
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=302)
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -176,6 +190,39 @@ async def dashboard(request: Request):
             ],
         },
     )
+
+
+# ── Login / logout ───────────────────────────────────────────────────────────
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_form(request: Request):
+    if request.session.get("authenticated"):
+        return RedirectResponse("/", status_code=302)
+    return templates.TemplateResponse(request, "login.html", {"request": request, "error": None})
+
+
+@app.post("/login", response_class=HTMLResponse)
+async def login_submit(request: Request):
+    form = await request.form()
+    email = str(form.get("email", "")).strip()
+    password = str(form.get("password", ""))
+    valid = (
+        bool(AUTH_EMAIL and AUTH_PASSWORD)
+        and hmac.compare_digest(email, AUTH_EMAIL)
+        and hmac.compare_digest(password, AUTH_PASSWORD)
+    )
+    if not valid:
+        return templates.TemplateResponse(
+            request, "login.html", {"request": request, "error": "Invalid email or password"}, status_code=401
+        )
+    request.session["authenticated"] = True
+    return RedirectResponse("/", status_code=302)
+
+
+@app.post("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/login", status_code=302)
 
 
 # ── Health ──────────────────────────────────────────────────────────────────
@@ -194,7 +241,7 @@ async def health():
 
 @app.get("/api/inventory")
 async def list_inventory(request: Request, table_type: str = "", limit: int = 50, offset: int = 0):
-    check_token(request)
+    require_auth(request)
     if table_type and table_type not in VALID_TABLE_TYPES:
         raise HTTPException(400, f"invalid table_type (must be one of {VALID_TABLE_TYPES})")
     items = list_inventory_db(table_type or "", limit, offset)
@@ -204,14 +251,14 @@ async def list_inventory(request: Request, table_type: str = "", limit: int = 50
 
 @app.post("/api/inventory")
 async def create_or_update_inventory(request: Request, item: InventoryCreate):
-    check_token(request)
+    require_auth(request)
     row_id = upsert_inventory_db(item)
     return {"ok": True, "id": row_id}
 
 
 @app.get("/api/inventory/{item_id}")
 async def get_inventory_item(request: Request, item_id: int):
-    check_token(request)
+    require_auth(request)
     item = get_inventory_db(item_id)
     if not item:
         raise HTTPException(404, "item not found")
@@ -228,7 +275,7 @@ async def search_comps(request: Request, q: str = "", limit: int = 20):
     Query param `q` is the eBay search query (e.g. "Samsung 8GB DDR4 SODIMM").
     Returns active + sold listings, averages, and a suggested search_query.
     """
-    check_token(request)
+    require_auth(request)
     if not q or not q.strip():
         raise HTTPException(400, "query parameter 'q' is required")
     if not EBAY_CLIENT_ID or not EBAY_CLIENT_SECRET:
@@ -255,7 +302,7 @@ async def search_by_photo(request: Request, body: dict):
     Expects body: {"image_b64": "<base64>", "image_mime": "image/jpeg", "limit": 50}
     Returns: {identification, comps, analysis}
     """
-    check_token(request)
+    require_auth(request)
     if not EBAY_CLIENT_ID or not EBAY_CLIENT_SECRET:
         raise HTTPException(503, "eBay keys not configured")
     if not CLAUDE_API_KEY:
@@ -293,7 +340,7 @@ async def save_identification(request: Request, body: dict):
     Creates an inventory item from the identification, writes a price snapshot,
     and returns the item ID.
     """
-    check_token(request)
+    require_auth(request)
     identification = body.get("identification", {})
     comps = body.get("comps", {})
     table_type = body.get("table_type", "goodwill_flips")
@@ -338,7 +385,7 @@ async def save_identification(request: Request, body: dict):
 
 @app.post("/api/comps/lookup")
 async def lookup_comps(request: Request, body: CompsLookupRequest):
-    check_token(request)
+    require_auth(request)
     if not EBAY_CLIENT_ID or not EBAY_CLIENT_SECRET:
         raise HTTPException(503, "eBay keys not configured")
     result = await ebay.lookup_comps(body.query, body.limit, body.aspects, body.table_type)
@@ -349,7 +396,7 @@ async def lookup_comps(request: Request, body: CompsLookupRequest):
 
 @app.get("/api/comps/history")
 async def comps_history(request: Request, item_id: int, limit: int = 90):
-    check_token(request)
+    require_auth(request)
     snapshots = list_price_history_db(item_id, limit)
     return {"snapshots": snapshots}
 
@@ -357,7 +404,7 @@ async def comps_history(request: Request, item_id: int, limit: int = 90):
 @app.post("/api/comps/batch")
 async def batch_comps(request: Request, body: dict):
     """Run comps for multiple items. Cron-friendly."""
-    check_token(request)
+    require_auth(request)
     if not EBAY_CLIENT_ID or not EBAY_CLIENT_SECRET:
         raise HTTPException(503, "eBay keys not configured")
     item_ids = body.get("item_ids", [])
@@ -382,7 +429,7 @@ async def batch_comps(request: Request, body: dict):
 
 @app.get("/api/memory-market")
 async def memory_market(request: Request):
-    check_token(request)
+    require_auth(request)
     prices = list_memory_prices_db(limit=180)
     events = list_memory_events_db(limit=50)
     return {"prices": prices, "events": events, "generated_at": datetime.now(timezone.utc).isoformat()}
@@ -391,7 +438,7 @@ async def memory_market(request: Request):
 @app.post("/api/memory-market")
 async def log_memory_event(request: Request, body: dict):
     """Log a supply-side / price event for the memory market."""
-    check_token(request)
+    require_auth(request)
     event_type = body.get("event_type", "price_spike")
     generation = body.get("generation") or None
     headline = body.get("headline", "")
@@ -403,13 +450,12 @@ async def log_memory_event(request: Request, body: dict):
     return {"ok": True, "event_type": event_type, "headline": headline}
 
 
-# ── Static dashboard JS data endpoint (lightweight, no auth for page render) ─
+# ── Static dashboard JS data endpoint ────────────────────────────────────────
 
 @app.get("/api/dashboard-data")
 async def dashboard_data(request: Request):
-    """Lightweight data for the dashboard page (called by JS after page load).
-    Auth gated — same token check."""
-    check_token(request)
+    """Lightweight data for the dashboard page (called by JS after page load)."""
+    require_auth(request)
     active_table = request.query_params.get("table", "personal_assets")
     items = list_inventory_db(active_table, limit=100, offset=0)
     return {"items": items, "table": active_table}

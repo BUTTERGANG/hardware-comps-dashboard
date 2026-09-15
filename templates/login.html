@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>Log in — Hardware Comps Dashboard</title>
+  <link rel="stylesheet" href="/static/css/base.css" />
+</head>
+<body>
+  <main class="login-wrap">
+    <form class="login-card" method="post" action="/login">
+      <div class="brand login-brand">HW Comps</div>
+      <p class="subtitle">Sign in to continue</p>
+
+      {% if error %}
+      <p class="login-error">{{ error }}</p>
+      {% endif %}
+
+      <label class="login-label" for="email">Email</label>
+      <input class="input" type="email" id="email" name="email" autocomplete="username" required autofocus />
+
+      <label class="login-label" for="password">Password</label>
+      <input class="input" type="password" id="password" name="password" autocomplete="current-password" required />
+
+      <button type="submit" class="btn btn-primary login-submit">Log in</button>
+    </form>
+  </main>
+</body>
+</html>

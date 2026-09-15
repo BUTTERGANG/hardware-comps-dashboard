@@ -198,13 +198,68 @@ a:hover {
   border-color: var(--accent-border);
 }
 
-.topbar-meta .token-hint {
-  font-size: 0.72rem;
-  color: var(--text-dim);
+.topbar-meta form {
+  margin: 0;
+}
+
+.logout-btn {
+  font-size: 0.78rem;
+  padding: 0.4rem 0.8rem;
+}
+
+/* ── Login page ───────────────────────────────────────────────── */
+.login-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: var(--bg);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  background: linear-gradient(180deg, var(--bg-card), var(--bg-raised));
   border: 1px solid var(--border);
-  padding: 0.2rem 0.55rem;
-  border-radius: 999px;
-  white-space: nowrap;
+  border-radius: 12px;
+  padding: 2rem 1.75rem;
+}
+
+.login-brand {
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--accent);
+}
+
+.login-card .subtitle {
+  margin: 0 0 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.login-label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin-top: 0.4rem;
+}
+
+.login-submit {
+  margin-top: 1rem;
+  width: 100%;
+}
+
+.login-error {
+  margin: 0;
+  padding: 0.5rem 0.7rem;
+  border-radius: 8px;
+  background: var(--red-soft);
+  color: var(--red);
+  font-size: 0.85rem;
 }
 
 /* ── Page header ──────────────────────────────────────────────── */

@@ -48,8 +48,11 @@ Embedded `ebay_client.py` (not via proxy). Env: `EBAY_CLIENT_ID`,
 
 ## Auth
 
-API routes protected by Bearer token in `Authorization` header, validated
-against `HCD_API_TOKENS` env var (comma-separated). Health endpoint is public.
+Single-user email/password login (`/login`), session cookie via Starlette
+`SessionMiddleware`. Env: `AUTH_EMAIL`, `AUTH_PASSWORD`, `SESSION_SECRET`
+(random per-restart if unset — set it explicitly so sessions survive
+restarts). `/` redirects to `/login` when unauthenticated; `/api/*` routes
+return 401 via `require_auth()`. Health endpoint is public.
 
 ## Design rules
 

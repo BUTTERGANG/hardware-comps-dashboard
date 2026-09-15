@@ -31,7 +31,7 @@ Both share: same comp results panel, same "save as inventory item" action, same 
 
 ```
 GET /api/search?q=<query>&limit=<n>
-Auth: Bearer token required
+Auth: session login required
 Returns:
   {
     "query": "Samsung 8GB DDR4 SODIMM",
@@ -84,7 +84,7 @@ Then refreshes the current table view if the saved table matches the active tab.
 
 ```
 POST /api/search/photo
-Auth: Bearer token required
+Auth: session login required
 Body: { "image_b64": "<base64>", "image_mime": "image/jpeg", "limit": 20 }
 Returns:
   {
@@ -136,7 +136,7 @@ Flow:
 
 ```
 POST /api/search/save-identification
-Auth: Bearer token required
+Auth: session login required
 Body: { "identification": {...}, "comps": {...}, "analysis": {...},
         "table_type": "goodwill_flips", "acquisition_cost_cents": 500, "buy_source": "Photo scan" }
 Returns: { "ok": true, "id": 123, "item": {...} }
@@ -211,16 +211,16 @@ Files NOT needed: no new DB tables, no new Neon schema, no migration. The invent
 
 | Method | Path | Auth | Body/Params | Returns |
 |---|---|---|---|---|
-|| GET | `/api/search` | Bearer | `q` (required), `limit` (default 20) | Comps + averages |
-|| POST | `/api/search/photo` | Bearer | `{image_b64, image_mime, limit}` (limit default 20) | identification + comps + analysis + refined_query |
-|| POST | `/api/search/save-identification` | Bearer | `{identification, comps, analysis, table_type, acquisition_cost_cents, ...}` | saved item |
+|| GET | `/api/search` | Session | `q` (required), `limit` (default 20) | Comps + averages |
+|| POST | `/api/search/photo` | Session | `{image_b64, image_mime, limit}` (limit default 20) | identification + comps + analysis + refined_query |
+|| POST | `/api/search/save-identification` | Session | `{identification, comps, analysis, table_type, acquisition_cost_cents, ...}` | saved item |
 
 ---
 
 ## 7. What's NOT in scope for this pass
 
 - Amazon comps / Keepa integration (doc says v2, not launch-blocker)
-- User accounts / multi-user auth (dashboard is single-user with API token today)
+- User accounts / multi-user auth (dashboard is single-user, email+password session login today)
 - Photo storage / image history (images sent to Claude and discarded, same as thrift-lens)
 - OCR for pallet manifests (separate feature, not this)
 - Device farm Appium integration (separate feature, not this)

@@ -17,7 +17,9 @@
         {% endfor %}
       </nav>
       <div class="topbar-meta">
-        <span class="token-hint">API token required</span>
+        <form action="/logout" method="post">
+          <button type="submit" class="btn logout-btn">Log out</button>
+        </form>
       </div>
     </div>
   </header>
