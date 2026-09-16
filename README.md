@@ -36,6 +36,28 @@ with live eBay comps, per-item price history trends, and a RAM/SSD stockpile tra
 - `POST /api/comps/batch`     — Run comps for multiple items (cron-friendly)
 - `GET  /health`              — Liveness
 
+## Running locally
+
+The FastAPI app object lives in `app/main.py`, so the correct module path is
+**`app.main:app`** (not `app:app`). A wrapper script is provided for convenience:
+
+```bash
+./run.sh                        # http://127.0.0.1:5000 (default)
+PORT=8131 ./run.sh              # custom port
+```
+
+Or run uvicorn directly:
+
+```bash
+uv sync                        # create the venv / install deps (or: uv venv && uv pip install -e .)
+DATABASE_URL=postgresql://USER:***@HOST/DB ./run.sh
+```
+
+**Required env:** `DATABASE_URL` (Neon/PostgreSQL). Without it the data API is
+disabled and the dashboard shows a clear "not configured" empty state (it will
+not silently break). **Optional env:** `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`,
+`SITE_URL`, plus the admin email/password used to seed the session login.
+
 ## Reused from existing repos
 
 || Source                   | Carried over                                      |

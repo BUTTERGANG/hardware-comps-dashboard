@@ -163,17 +163,6 @@ def require_auth(request: Request) -> None:
         raise HTTPException(status_code=401, detail="login required")
 
 
-# ── Lifespan ────────────────────────────────────────────────────────────────
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("Hardware Comps Dashboard starting")
-    init_db()
-    logger.info("DB initialized")
-    yield
-    logger.info("Shutting down")
-
-
 # ── Dashboard (server-rendered) ─────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
