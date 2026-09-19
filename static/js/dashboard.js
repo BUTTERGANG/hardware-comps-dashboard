@@ -21,6 +21,7 @@
     wireSearchFilter();
     wirePager();
     wireTableRowClicks();
+    wireSelectAll();
     wireSearchPanel();
     // Initial load of the active table
     loadTable(currentTable, 0);
@@ -28,8 +29,6 @@
     if (currentTable === "ram_ssd_stockpile") {
       loadMemoryMarket();
     }
-    // Wire search panel after DOM ready
-    wireSearchPanel();
   });
 
   /* ── Auth: session cookie is sent automatically by the browser ── */
@@ -88,8 +87,12 @@
         var table = btn.getAttribute("data-table");
         if (table === currentTable) return;
         // Update active state
-        btns.forEach(function (b) { b.classList.remove("active"); });
+        btns.forEach(function (b) {
+          b.classList.remove("active");
+          b.setAttribute("aria-selected", "false");
+        });
         btn.classList.add("active");
+        btn.setAttribute("aria-selected", "true");
         currentTable = table;
         currentPage = 0;
         allItems = [];
@@ -179,6 +182,9 @@
       html += renderRow(item);
     });
     body.innerHTML = html;
+
+    var selectAll = document.getElementById("selectAllCheckbox");
+    if (selectAll) selectAll.checked = false;
   }
 
   function renderRow(item) {
@@ -294,6 +300,29 @@
   }
 
   /* ── Lazy sparkline load on row hover (avoids N API calls on render) ── */
+  /* ── Select-all checkbox (header) ── */
+  function wireSelectAll() {
+    var selectAll = document.getElementById("selectAllCheckbox");
+    var tableBody = document.getElementById("inventoryBody");
+    if (!selectAll || !tableBody) return;
+
+    selectAll.addEventListener("change", function () {
+      var boxes = tableBody.querySelectorAll(".row-checkbox");
+      boxes.forEach(function (box) {
+        box.checked = selectAll.checked;
+      });
+    });
+
+    // Keep header checkbox in sync when a row checkbox is (un)checked,
+    // and reset it whenever the table body is re-rendered.
+    tableBody.addEventListener("change", function (e) {
+      if (!e.target.classList.contains("row-checkbox")) return;
+      var boxes = tableBody.querySelectorAll(".row-checkbox");
+      var allChecked = boxes.length > 0 && Array.prototype.every.call(boxes, function (b) { return b.checked; });
+      selectAll.checked = allChecked;
+    });
+  }
+
   function wireTableRowClicks() {
     var tableBody = document.getElementById("inventoryBody");
     var debounceTimer = null;
@@ -881,9 +910,15 @@
     textSaveBtnObserver.observe(document.getElementById("textSearchResult"), { childList: true, subtree: false });
 
     // ── Photo search ──
-    // Click-to-browse
+    // Click-to-browse (also keyboard-activatable — see role="button" in markup)
     photoPlaceholder.addEventListener("click", function () {
       photoInput.click();
+    });
+    photoPlaceholder.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+        e.preventDefault();
+        photoInput.click();
+      }
     });
 
     // Drag and drop

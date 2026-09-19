@@ -723,15 +723,6 @@ select.input {
 .search-summary-card .card-value.positive { color: var(--green); }
 .search-summary-card .card-value.negative { color: var(--red); }
 
-/* Comps list */
-.comps-list {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  max-height: 340px;
-  overflow-y: auto;
-  background: var(--bg-inset);
-}
-
 .comp-items {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));

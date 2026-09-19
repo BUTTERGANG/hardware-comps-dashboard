@@ -43,7 +43,7 @@
         <div class="photo-upload-area" id="photoDropZone">
           <div class="photo-upload-inner" id="photoUploadInner">
             <img id="photoPreview" class="photo-preview" alt="" hidden />
-            <div class="photo-placeholder" id="photoPlaceholder">
+            <div class="photo-placeholder" id="photoPlaceholder" role="button" tabindex="0" aria-label="Choose a photo to search">
               <div class="photo-icon">📷</div>
               <p class="photo-hint">Drop an image here, or click to browse</p>
               <p class="photo-subhint">JPEG, PNG, WEBP — max 10MB</p>
@@ -106,7 +106,7 @@
         <th>Active Comp</th>
         <th>Trend</th>
         <th>Last Looked</th>
-        <th></th>
+        <th class="checkbox-cell"><input type="checkbox" id="selectAllCheckbox" aria-label="Select all rows" /></th>
       </tr>
     </thead>
     <tbody id="inventoryBody">

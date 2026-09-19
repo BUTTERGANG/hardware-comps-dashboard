@@ -11,9 +11,9 @@
   <header class="topbar">
     <div class="container topbar-inner">
       <a href="/" class="brand">HW Comps</a>
-      <nav class="table-switcher" id="tableSwitcher">
+      <nav class="table-switcher" id="tableSwitcher" role="tablist">
         {% for key, label in tables %}
-        <a href="#" data-table="{{ key }}" class="switcher-btn {% if key == active_table %}active{% endif %}">{{ label }}</a>
+        <button type="button" role="tab" aria-selected="{% if key == active_table %}true{% else %}false{% endif %}" data-table="{{ key }}" class="switcher-btn {% if key == active_table %}active{% endif %}">{{ label }}</button>
         {% endfor %}
       </nav>
       <div class="topbar-meta">
